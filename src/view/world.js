@@ -5,6 +5,7 @@ import { tween, ease, updateTweens, clock } from './tween.js';
 import { makeModel, ownerRing, avatarModel, OWNER, mat } from './models.js';
 import { makeCard, battleFace, objectFace, deckModel, CH } from './cards.js';
 import { KINDS, KIND_IDS } from '../engine/kinds.js';
+import { isWet } from '../engine/engine.js';
 
 export const CELL = 0.9;
 export const CARD_TILT = 0.62;
@@ -37,6 +38,7 @@ export class World {
     this.markers = [];
     this.cellMarks = [];
     this.pov = null; this.povK = 0;
+    this.pstate = [{}, {}];
     this.badges = new Map();
     this.ghost = [false, false];
     this.mal = [0, 0];
@@ -309,6 +311,9 @@ export class World {
     for (let p = 0; p < 2; p++) {
       this.decks[p].userData.set(S.players[p].deck.length);
       this.mal[p] = S.players[p].malheur;
+      const pl = S.players[p];
+      this.pstate[p] = { wet: isWet(S, p), stunned: pl.stunned, yellow: pl.yellow };
+      if (this.cards[p] && pl.card) this.cards[p].userData.data.frozen = !!pl.card.frozen;
     }
     this.showBoard(true);
     return this.relayout(0.3);
@@ -487,6 +492,7 @@ export class World {
       if (this.ghost[p]) a.position.y = 0.4 + Math.sin(this.time * 3) * 0.12;
     }
     for (const m of this.cellMarks) m.material.opacity = 0.35 + Math.sin(this.time * 6) * 0.2;
+    this.updateStates(dt);
     for (const p of [0, 1]) {
       const gl = this.decks[p].userData.glow;
       const target = this.deckGlow === p ? 0.55 + Math.sin(this.time * 5) * 0.3 : 0;
@@ -515,6 +521,44 @@ export class World {
     void clock;
   }
   punch(a = 1) { this.camPunch = Math.max(this.camPunch, a); }
+
+  // États visibles : carte gelée (glace), joueur mouillé (gouttes), assommé (étoiles), cartons jaunes.
+  updateStates(dt) {
+    for (const p of [0, 1]) {
+      const c = this.cards[p];
+      if (c) {
+        let ice = c.userData.ice;
+        const on = !!c.userData.data?.frozen;
+        if (on && !ice) {
+          ice = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.12, 1.66), new THREE.MeshStandardMaterial({ color: '#caf0f8', transparent: true, opacity: 0.55, roughness: 0.05, emissive: '#48cae4', emissiveIntensity: 0.35, depthWrite: false }));
+          ice.position.y = 0.04;
+          c.add(ice); c.userData.ice = ice;
+        }
+        if (ice) ice.visible = on;
+      }
+      const st = this.pstate[p] || {};
+      const av = this.avatars[p];
+      let ex = av.userData.extras;
+      if (!ex) {
+        ex = new THREE.Group();
+        const stars = new THREE.Group();
+        for (let i = 0; i < 3; i++) { const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.09), new THREE.MeshBasicMaterial({ color: '#ffd60a' })); s.position.set(Math.cos(i * 2.1) * 0.35, 0, Math.sin(i * 2.1) * 0.35); stars.add(s); }
+        stars.position.y = 1.75;
+        const cards = new THREE.Group();
+        for (let i = 0; i < 2; i++) { const y = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.28, 0.02), new THREE.MeshStandardMaterial({ color: '#ffd000', emissive: '#ffb703', emissiveIntensity: 0.4 })); y.position.set(0.45 + i * 0.12, 0.5, 0.1); y.rotation.z = -0.2 + i * 0.15; cards.add(y); }
+        ex.add(stars, cards);
+        av.add(ex);
+        av.userData.extras = ex; ex.userData = { stars, cards };
+      }
+      ex.userData.stars.visible = !!st.stunned;
+      ex.userData.stars.rotation.y += dt * 4;
+      ex.userData.cards.children.forEach((y, i) => (y.visible = (st.yellow || 0) > i));
+      if (st.wet && Math.random() < dt * 10) {
+        const at = av.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 1.3, (Math.random() - 0.5) * 0.4));
+        this.fx.norm.emit(at, new THREE.Vector3(0, -1, 0), { color: '#48cae4', size: 0.09, life: 0.6, gravity: -6 });
+      }
+    }
+  }
 
   // Petit écran LED fixé sur la bombe : le compte à rebours fait partie de la scène 3D.
   bombLed(m) {
@@ -556,6 +600,7 @@ export class World {
     this.cards = [null, null];
     this.clearCells();
     this.deckGlow = null;
+    this.pstate = [{}, {}];
     this.pov = null; this.povK = 0;
     for (const c of [...this.potGroup.children]) this.potGroup.remove(c);
     this.storm = false;

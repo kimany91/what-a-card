@@ -27,6 +27,11 @@ export function evaluate(S, p) {
   if (S.players[o].dead) s += 20;
   s -= S.players[p].malheur * 2;
   s += S.players[o].malheur * 2;
+  if (S.players[o].stunned && S.phase === 'action') s += 4;
+  if (S.players[p].stunned && S.phase === 'action') s -= 4;
+  s += S.players[o].yellow * 4 - S.players[p].yellow * 4;
+  if (S.reveal?.[p]) s += 1.5;
+  if (S.players[p].card?.frozen && S.phase === 'action') { const ol = outlook(S); s += ol.winner === p ? 3 : -2; }
   return s;
 }
 

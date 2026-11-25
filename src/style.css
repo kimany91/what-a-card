@@ -235,3 +235,14 @@ button { font: inherit; color: inherit; }
 .flypts { position: absolute; left: 0; top: 0; font-family: var(--f-display); font-size: 40px; color: var(--me); text-shadow: 0 3px 0 rgba(0, 0, 0, 0.6); pointer-events: none; z-index: 6; }
 .flypts.opp { color: #ff8fa3; }
 .flypts.neg { color: var(--bad); }
+
+/* mini-jeu de timing : arrête l'aiguille dans la zone verte */
+.mg-timing { position: absolute; left: 50%; bottom: calc(var(--safe-b) + 150px); transform: translateX(-50%); width: min(80vw, 300px); height: 34px; border-radius: 17px; background: rgba(11, 10, 20, 0.85); border: 3px solid #fff; overflow: hidden; pointer-events: none; }
+.mg-timing b { position: absolute; top: 0; bottom: 0; left: calc(50% - var(--zone, 20%) / 2); width: var(--zone, 20%); background: linear-gradient(90deg, #38b000, #70e000, #38b000); }
+.mg-timing i { position: absolute; top: -2px; bottom: -2px; width: 6px; margin-left: -3px; left: var(--pos, 0%); background: #fff; box-shadow: 0 0 8px #fff; }
+/* choix gauche / centre / droite (penalty) */
+.mg-choice { position: absolute; left: 0; right: 0; bottom: calc(var(--safe-b) + 120px); display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 0 16px; }
+.mg-choice button { font-family: var(--f-display); font-size: 15px; height: 86px; border-radius: 16px; border: 3px solid #fff; background: rgba(43, 147, 72, 0.85); color: #fff; box-shadow: 0 5px 0 #1b5e20; cursor: pointer; }
+.mg-choice button:active { transform: translateY(3px); }
+/* main adverse dévoilée par la Loupe */
+.opp-hand.revealed img { width: 44px; height: 62px; margin-left: -8px; box-shadow: 0 0 0 2px var(--me), 0 2px 6px rgba(0, 0, 0, 0.5); }

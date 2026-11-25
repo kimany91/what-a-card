@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { tween, animate, ease, wait, freezeFrame, all } from './tween.js';
 import { sfx, buzz } from './audio.js';
 import { cueModel, boltGeo, mat, makeModel, OWNER } from './models.js';
-import { battleFace, makeCard } from './cards.js';
+import { battleFace, makeCard, CW, CH } from './cards.js';
 import { CARD_TILT } from './world.js';
 import { KINDS } from '../engine/kinds.js';
 
@@ -131,7 +131,7 @@ export class Animator {
     const o = m.obj, p = this.pos(o).add(V(0, 0.3, 0));
     const cols = this.colorsOf(m);
     const c = ev.cause;
-    if (c === 'capture' || c === 'blast') {
+    if (c === 'capture' || c === 'blast' || c === 'bowl') {
       const away = p.clone().sub(V(0, 0, 0)).setY(0).normalize().multiplyScalar(c === 'blast' ? 7 : 5);
       sfx(c === 'blast' ? 'shot' : 'slam');
       this.fx.shatter(p, cols, { n: 12 });
@@ -149,7 +149,7 @@ export class Animator {
       sfx('slip');
       await all(this.arc(o, drop, 0.8, 0.6, ease.inQuad), this.spin(o, 'x', 2, 0.6));
       this.fx.pop(edge.clone().setY(0.8), 'TOMBÉ !', 'bad', 0.9);
-    } else if (c === 'shot' || c === 'slip') {
+    } else if (c === 'shot' || c === 'slip' || c === 'smash') {
       sfx('shot'); buzz(40);
       this.fx.shatter(p, cols, { n: 26, speed: 5 });
       this.fx.burst(p, { n: 30, colors: ['#fff3b0', '#ffba08'], speed: 5, up: 2, size: 0.25, life: 0.4 });
@@ -933,14 +933,14 @@ export class Animator {
     c.quaternion.setFromEuler(new THREE.Euler(0, 0, Math.PI));
     if (ev.card) deck.userData.set(Math.max(0, (deck.userData.count ?? 26) - 1));
     sfx('whoosh'); buzz(10);
-    const dist = me ? 6.8 : 8.5, up = me ? 0.3 : 1.8;
+    const dist = me ? 6.8 : 10.5, up = me ? 0.3 : 0.9;
     const to = W.revealPoint(dist, up);
     const q0 = c.quaternion.clone(), q1 = W.cameraQuat(Math.PI);
     const from = c.position.clone();
     await animate(me ? 0.45 : 0.35, (k) => {
       c.position.lerpVectors(from, to, k); c.position.y += Math.sin(Math.PI * k) * 0.8;
       c.quaternion.slerpQuaternions(q0, q1, k);
-      c.scale.setScalar(1 + k * (me ? 0.25 : 0.05));
+      c.scale.setScalar(1 + k * (me ? 0.25 : -0.1));
     }, ease.outCubic);
     const rays = this.rays(ev);
     const setFlip = (theta, glow = 0) => {
@@ -1067,7 +1067,7 @@ export class Animator {
     if (me && this.skipUse) { this.lastBurst = this.skipFrom || null; return; }
     const c = W.makeObjectCard(ev.kind);
     const start = me ? W.revealPoint(4.5, -2.6) : W.revealPoint(7, 3.8);
-    const show = W.revealPoint(me ? 5.5 : 5, me ? 0.4 : 0.6);
+    const show = W.revealPoint(me ? 5.5 : 6.5, me ? 0.4 : 0.3);
     c.position.copy(start); W.faceCamera(c, me ? 0 : Math.PI); c.scale.setScalar(0.5);
     sfx('whoosh');
     const q0 = c.quaternion.clone(), q1 = W.cameraQuat(0);
@@ -1152,5 +1152,262 @@ export class Animator {
     else await wait(0.4);
     W.scene.remove(ball);
   }
-}
 
+  // ------------------------------------------------------------ v0.4 : états
+  async on_freeze(ev) {
+    const c = this.W.cards[ev.p];
+    if (!c) return;
+    c.userData.data.frozen = true;
+    sfx('freeze'); buzz(30);
+    this.fx.burst(c.position.clone(), { n: 40, colors: ['#caf0f8', '#ffffff', '#90e0ef'], speed: 2.5, up: 2, size: 0.18, life: 0.7 });
+    this.fx.pop(c.position.clone().add(V(0, 1, 0)), 'GELÉE', 'water big', 1);
+    await this.squash(c, 1, 0.2, 0.3);
+  }
+  async on_melt(ev) {
+    const c = this.W.cards[ev.p];
+    if (!c) return;
+    c.userData.data.frozen = false;
+    if (ev.smash) { sfx('glass'); this.fx.shatter(c.position.clone(), ['#caf0f8', '#ffffff'], { n: 24, s: 0.07 }); }
+    else { sfx('fire'); this.fx.burst(c.position.clone(), { n: 30, color: '#ffffff', speed: 1, up: 2.5, size: 0.35, life: 1, gravity: 1, additive: false }); }
+    await this.fx.pop(c.position.clone().add(V(0, 1, 0)), ev.smash ? 'GLACE BRISÉE' : 'ÇA FOND', 'water', 0.9);
+  }
+  async on_iceBlock(ev) {
+    const c = this.W.cards[ev.p];
+    if (!c) return;
+    sfx('clink');
+    this.fx.burst(c.position.clone(), { n: 16, color: '#caf0f8', speed: 2, up: 1, size: 0.15, life: 0.4 });
+    await this.fx.pop(c.position.clone().add(V(0, 1, 0)), 'BLOQUÉ PAR LA GLACE', 'water', 0.9);
+  }
+  async on_wetPlayer(ev) {
+    const a = this.W.avatars[ev.p];
+    this.W.pstate[ev.p] = { ...this.W.pstate[ev.p], wet: true };
+    sfx('splash');
+    this.fx.water(a.position.clone().add(V(0, 1.2, 0)), 40);
+    await this.fx.pop(a.position.clone().add(V(0, 2, 0)), 'TREMPÉ', 'water big', 1);
+  }
+  async on_stun(ev) {
+    const a = this.W.avatars[ev.p];
+    this.W.pstate[ev.p] = { ...this.W.pstate[ev.p], stunned: true };
+    sfx('zap'); buzz(80);
+    this.fx.burst(a.position.clone().add(V(0, 1, 0)), { n: 40, colors: ['#4cc9f0', '#ffffff', '#ffd60a'], speed: 3, up: 2, size: 0.16, life: 0.4 });
+    this.spin(a.userData.inner, 'y', 2, 0.6);
+    await this.fx.pop(a.position.clone().add(V(0, 2.1, 0)), 'ASSOMMÉ', 'gold big', 1);
+  }
+  async on_yellow(ev) {
+    this.W.pstate[ev.p] = { ...this.W.pstate[ev.p], yellow: ev.count };
+    sfx('tick'); sfx('tick');
+    await this.fx.banner('CARTON JAUNE', 'gold', 1);
+  }
+  async on_red(ev) {
+    const W = this.W;
+    W.pstate[ev.p] = { ...W.pstate[ev.p], yellow: 0 };
+    sfx('bataille'); buzz(150);
+    this.fx.flash('#d00000', 0.5, 0.4);
+    this.fx.shake(0.6);
+    const c = W.cards[ev.p];
+    if (c) { const m = c.userData.front.material = c.userData.front.material.clone(); m.color.set('#ff6b6b'); }
+    await this.fx.banner('CARTON ROUGE', 'lose', 1.3);
+  }
+  async on_shield(ev) {
+    const m = this.m(ev.by);
+    const at = m ? this.pos(m.obj).add(V(0, 0.6, 0)) : this.W.avatars[ev.p].position.clone().add(V(0, 1, 0));
+    sfx('clink'); buzz(40);
+    this.fx.ring(at.clone().setY(0.1), { color: '#ffffff', radius: 1.5, dur: 0.4 });
+    this.fx.burst(at, { n: 24, colors: ['#ffffff', '#ffd166'], speed: 3, up: 2, size: 0.15, life: 0.4 });
+    if (m) await this.squash(m.obj, null, 0.35, 0.35);
+    const word = { chien: 'LE CHIEN PREND LA BALLE', coffre: 'COFFRE VERROUILLÉ', parapluie: 'PROTÉGÉ' }[ev.kind] || 'PROTÉGÉ';
+    await this.fx.pop(at.clone().add(V(0, 0.8, 0)), word, 'good big', 1);
+  }
+  async on_dogChase(ev) {
+    const dog = this.m(ev.dog), cat = this.m(ev.id);
+    if (!dog || !cat) return;
+    dog.busy = true;
+    const home = dog.obj.position.clone();
+    sfx('meow');
+    await this.arc(dog.obj, cat.obj.position.clone(), 0.8, 0.45);
+    this.fx.pop(cat.obj.position.clone().add(V(0, 1, 0)), 'OUAF !', 'gold big', 0.8);
+    this.arc(dog.obj, home, 0.6, 0.45).then(() => { dog.busy = false; });
+  }
+  async on_missileHit(ev) {
+    const a = this.W.avatars[ev.p];
+    const at = a.position.clone().add(V(0, 1, 0));
+    sfx('boom'); buzz(150); freezeFrame(0.08);
+    this.fx.explosion(at, 0.9);
+    this.fx.flash('#ffba08', 0.6, 0.4);
+    this.fx.shake(1);
+    await wait(0.3);
+  }
+  async on_reveal(ev) {
+    if (ev.p === this.W.me) this.ui.revealOpp?.(ev.hand);
+    else this.fx.pop(this.W.avatars[ev.p].position.clone().add(V(0, 2, 0)), 'IL VOIT TA MAIN', 'opp big', 1.1);
+    await wait(0.3);
+  }
+  async on_swap(ev) {
+    const W = this.W;
+    const a = W.cards[0], b = W.cards[1];
+    sfx('whoosh'); sfx('sparkle');
+    const pa = W.cardPos(0), pb = W.cardPos(1);
+    const ops = [];
+    if (a) ops.push(all(this.arc(a, pb, 2, 0.6), this.spin(a, 'y', 1, 0.6)));
+    if (b) ops.push(all(this.arc(b, pa, 2, 0.6), this.spin(b, 'y', 1, 0.6)));
+    await all(ops);
+    W.cards = [b, a];
+    if (W.cards[0]) W.cards[0].userData.pick = { t: 'card', p: 0 };
+    if (W.cards[1]) W.cards[1].userData.pick = { t: 'card', p: 1 };
+    this.fx.banner('ÉCHANGE !', 'envers', 0.9);
+  }
+
+  // ------------------------------------------------------------ v0.4 : objets joués par le bot (ou sans mini-jeu)
+  near2(t) { return this.targetPos(t); }
+  async use_boxe(ev, m) {
+    const W = this.W;
+    const mid = V(0, 1.4, 0);
+    await this.lift(m, mid, 0.35, 1.6);
+    for (let i = 0; i < 6; i++) {
+      sfx('slam'); buzz(15);
+      this.fx.burst(mid.clone().add(V((i % 2 ? 0.4 : -0.4), 0, 0)), { n: 10, colors: ['#ffffff', '#ffd166'], speed: 2, up: 1, size: 0.15, life: 0.25 });
+      await this.jitter(m.obj, 0.25, 0.12);
+    }
+    const wa = W.avatars[ev.winner].position.clone().add(V(0, 2, 0));
+    this.fx.pop(wa, 'VAINQUEUR', ev.winner === W.me ? 'good big' : 'opp big', 1);
+    this.fx.banner('K.O. !', ev.winner === W.me ? 'win' : 'lose', 0.9);
+    this.goHome(m);
+  }
+  async use_foot(ev, m) {
+    const W = this.W;
+    const keeper = 1 - ev.p;
+    const ka = W.avatars[keeper];
+    const goalAt = ka.position.clone().add(V(-0.6, 0.6, 0));
+    const start = W.launchPos(ev.p);
+    m.obj.position.copy(start);
+    await wait(0.2);
+    sfx('slam');
+    const dir = ev.shot ?? Math.floor(Math.random() * 3);
+    const dive = ev.dive ?? (ev.goal ? (dir + 1) % 3 : dir);
+    const off = (d) => (d - 1) * 0.9;
+    tween(ka.userData.inner.rotation, { z: off(dive) * -1 }, 0.3, ease.outQuad);
+    tween(ka.userData.inner.position, { x: off(dive) * 0.6 }, 0.3);
+    await all(this.arc(m.obj, goalAt.clone().add(V(off(dir), 0, 0)), 1.2, 0.5, ease.outQuad), this.spin(m.obj, 'x', 3, 0.5));
+    if (ev.goal) { sfx('win'); this.fx.burst(m.obj.position.clone(), { n: 60, colors: ['#ffffff', '#2b9348', '#ffd166'], speed: 5, up: 3, size: 0.2, life: 0.8 }); this.fx.banner('BUT !', ev.p === W.me ? 'win' : 'lose', 1.1); }
+    else { sfx('clink'); this.fx.banner('ARRÊT !', keeper === W.me ? 'win' : 'lose', 1.1); await this.arc(m.obj, start.clone().add(V(1.5, 0, 0)), 1, 0.5); }
+    await wait(0.4);
+    tween(ka.userData.inner.rotation, { z: 0 }, 0.3); tween(ka.userData.inner.position, { x: 0 }, 0.3);
+    this.goHome(m);
+  }
+  async use_basket(ev, m) {
+    const W = this.W;
+    const hoop = V(0, 2.4, W.zs(1 - ev.p) * 4.2);
+    sfx('whoosh');
+    await all(this.arc(m.obj, ev.score ? hoop : hoop.clone().add(V(0.7, 0.2, 0)), 1.5, 0.6, ease.outQuad), this.spin(m.obj, 'x', 2, 0.6));
+    if (ev.score) { sfx('sparkle'); this.fx.ring(hoop, { color: '#f77f00', radius: 1, dur: 0.4, y: hoop.y }); this.fx.pop(hoop.clone().add(V(0, 0.6, 0)), 'PANIER !', 'gold big', 1); }
+    else {
+      sfx('clink');
+      const v = ev.victim != null ? this.m(ev.victim) : null;
+      const to = v ? this.pos(v.obj).add(V(0, 0.3, 0)) : V(0, 0.3, 0);
+      await this.arc(m.obj, to, 1, 0.45, ease.inQuad);
+      sfx('slam'); this.fx.shake(0.3);
+    }
+    this.goHome(m);
+  }
+  async use_bowling(ev, m) {
+    const W = this.W;
+    const sy = ev.p === 0 ? 4.6 : -0.6;
+    const ey = ev.stop ? ev.stop.y + (ev.p === 0 ? 0.6 : -0.6) : (ev.p === 0 ? -1.4 : 5.4);
+    const a = W.cellPos(ev.tgt.x, sy), b = W.cellPos(ev.tgt.x, ey);
+    m.obj.position.copy(a).setY(0.05);
+    m.obj.scale.setScalar(0.9);
+    sfx('whoosh');
+    await all(tween(m.obj.position, { x: b.x, z: b.z }, 0.7, ease.inQuad), this.spin(m.obj, 'x', 4, 0.7));
+    sfx('boom'); this.fx.shake(0.5);
+    if (ev.hits.length >= 3) this.fx.banner('STRIKE !', ev.p === W.me ? 'win' : 'lose', 1);
+    if (!ev.stop) await tween(m.obj.position, { y: -3 }, 0.3, ease.inQuad);
+    this.goHome(m);
+  }
+  async use_flechettes(ev, m) {
+    const W = this.W;
+    const at = W.revealPoint(7, 0.5);
+    m.obj.position.copy(at); W.faceCamera(m.obj, 0); m.obj.rotateX(-Math.PI / 2);
+    await this.scaleTo(m.obj, 1.6, 0.3);
+    for (const d of ev.darts) {
+      sfx('whoosh'); await wait(0.25); sfx('clink');
+      this.fx.pop(at.clone().add(V((Math.random() - 0.5) * 0.6, 0.6, 0)), d ? '+' + d : 'RATÉ', d >= 3 ? 'gold big' : d ? 'good' : 'muted', 0.8);
+    }
+    await wait(0.3);
+    this.goHome(m);
+  }
+  async use_glacon(ev, m) {
+    const to = this.targetPos(ev.tgt).add(V(0, 0.8, 0));
+    await this.lift(m, to, 0.4, 1.2);
+    await this.spin(m.obj, 'y', 1, 0.3);
+    this.goHome(m);
+  }
+  async use_taser(ev, m) {
+    const a = this.W.avatars[ev.tgt.p].position.clone().add(V(0.6, 1.1, 0.3));
+    await this.lift(m, a, 0.4, 1.3);
+    sfx('zap');
+    for (let i = 0; i < 5; i++) { this.fx.burst(a, { n: 12, colors: ['#4cc9f0', '#ffffff'], speed: 2, up: 1, size: 0.12, life: 0.25 }); this.fx.flash('#4cc9f0', 0.2, 0.1); await wait(0.08); }
+    this.goHome(m);
+  }
+  async use_jaune(ev, m) {
+    const W = this.W;
+    const from = W.avatars[ev.p].position.clone().add(V(0, 2, 0));
+    m.obj.position.copy(from);
+    await this.scaleTo(m.obj, 1.6, 0.25);
+    sfx('tick');
+    await this.arc(m.obj, W.avatars[ev.tgt.p].position.clone().add(V(0.5, 1.6, 0)), 1, 0.5);
+    this.goHome(m);
+  }
+  async use_missile(ev, m) {
+    const W = this.W;
+    sfx('whoosh');
+    await all(tween(m.obj.position, { y: 5 }, 0.5, ease.inQuad), this.spin(m.obj, 'y', 3, 0.5));
+    for (const v of ev.victims) {
+      const to = W.avatars[v].position.clone().add(V(0, 1, 0));
+      this.fx.pop(to.clone().add(V(0, 1.2, 0)), 'CIBLE', 'bad big', 0.7);
+      await tween(m.obj.position, { x: to.x, y: to.y, z: to.z }, 0.35, ease.inCubic);
+    }
+    W.scene.remove(m.obj);
+  }
+  async use_lancepierre(ev, m) {
+    const W = this.W;
+    const to = this.targetPos(ev.tgt);
+    const from = W.launchPos(ev.p).add(V(0, 0.4, 0));
+    m.obj.position.copy(from);
+    await this.scaleTo(m.obj, 1.3, 0.2);
+    sfx('whoosh');
+    const pebble = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), mat('#6c757d'));
+    pebble.position.copy(from).add(V(0, 0.7, 0)); W.scene.add(pebble);
+    await this.arc(pebble, ev.hit ? to : to.clone().add(V(0.8, 0, 0.6)), 1, 0.35, ease.linear);
+    W.scene.remove(pebble);
+    if (ev.hit) { sfx('slam'); this.fx.burst(to, { n: 16, colors: ['#ffffff', '#adb5bd'], speed: 3, up: 1, size: 0.12, life: 0.3 }); }
+    this.goHome(m);
+  }
+  async use_pile(ev, m) {
+    const coin = m.obj.userData.model.userData.coin;
+    const top = m.obj.position.clone().add(V(0, 2.2, 0));
+    sfx('clink');
+    await all(this.arc(m.obj, top, 0, 0.45, ease.outQuad), coin ? this.spin(coin, 'x', 5, 0.9) : null, wait(0.45).then(() => tween(m.obj.position, { y: 0.4 }, 0.45, ease.inQuad)));
+    if (coin) coin.rotation.x = ev.heads ? Math.PI / 2 - 0.3 : -Math.PI / 2 + 0.3;
+    sfx('slam');
+    this.fx.pop(m.obj.position.clone().add(V(0, 1, 0)), ev.heads ? 'PILE ! +2' : 'FACE… −2', ev.heads ? 'good big' : 'bad big', 1);
+    await wait(0.4);
+    this.goHome(m);
+  }
+  async use_loupe(ev, m) {
+    const W = this.W;
+    const to = ev.p === W.me ? W.revealPoint(6.5, 2.6) : W.revealPoint(6.5, -2.8);
+    await this.lift(m, to, 0.4, 1.5);
+    sfx('sparkle');
+    await wait(0.4);
+    this.goHome(m);
+  }
+  async use_marteau(ev, m) {
+    const to = this.targetPos(ev.tgt);
+    await this.lift(m, to.clone().add(V(0.4, 1.1, 0)), 0.35, 1.3);
+    await tween(m.obj.rotation, { z: 1.2 }, 0.15, ease.inQuad);
+    sfx(ev.ok ? 'boom' : 'clink'); buzz(60); this.fx.shake(ev.ok ? 0.6 : 0.2);
+    this.fx.burst(to, { n: 20, colors: ['#ffffff', '#adb5bd'], speed: 3, up: 2, size: 0.14, life: 0.4 });
+    await tween(m.obj.rotation, { z: 0 }, 0.2);
+    this.goHome(m);
+  }
+}

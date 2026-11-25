@@ -18,6 +18,8 @@ export class Minigames {
     this.reelEl = $('mgReel');
     this.crossEl = $('mgCross');
     this.btnEl = $('mgBtn');
+    this.timEl = $('mgTiming');
+    this.choiceEl = $('mgChoice');
     this.handlers = null;
     const ev = (name) => (e) => { if (this.handlers?.[name]) { e.preventDefault(); this.handlers[name](e); } };
     this.layer.addEventListener('pointerdown', ev('down'));
@@ -27,7 +29,7 @@ export class Minigames {
   }
 
   // ------------------------------------------------------------ couche de gestes
-  open(hint) { this.layer.hidden = false; this.hint(hint); this.gauge(null); this.reelEl.hidden = true; this.crossEl.hidden = true; this.btnEl.hidden = true; }
+  open(hint) { this.layer.hidden = false; this.hint(hint); this.gauge(null); this.reelEl.hidden = true; this.crossEl.hidden = true; this.btnEl.hidden = true; this.timEl.hidden = true; this.choiceEl.hidden = true; }
   close() { this.layer.hidden = true; this.handlers = null; }
   hint(t) { this.hintEl.textContent = t || ''; this.hintEl.classList.remove('pulse'); void this.hintEl.offsetWidth; this.hintEl.classList.add('pulse'); }
   gauge(v, danger = false) {
@@ -111,6 +113,57 @@ export class Minigames {
       this.btnEl.textContent = label;
       this.btnEl.onclick = (e) => { e.stopPropagation(); this.btnEl.hidden = true; res(); };
     });
+  }
+
+  // Aiguille qui va et vient : toucher l'écran pour l'arrêter. Renvoie 0 (raté) à 1 (parfait).
+  timing({ speed = 1.4, zone = 0.22 } = {}) {
+    return new Promise((res) => {
+      this.timEl.hidden = false;
+      this.timEl.style.setProperty('--zone', zone * 100 + '%');
+      let t = Math.random() * 2, last = performance.now(), live = true;
+      const tick = () => {
+        if (!live) return;
+        const now = performance.now(); t += ((now - last) / 1000) * speed; last = now;
+        const pos = (Math.sin(t * Math.PI) + 1) / 2;
+        this.timEl.style.setProperty('--pos', pos * 100 + '%');
+        this._pos = pos;
+        requestAnimationFrame(tick);
+      };
+      tick();
+      this.handlers = {
+        down: () => {
+          live = false; this.handlers = null;
+          const d = Math.abs(this._pos - 0.5);
+          const q = d <= zone / 2 ? 1 - (d / (zone / 2)) * 0.5 : Math.max(0, 0.5 - (d - zone / 2) * 2);
+          sfx(d <= zone / 2 ? 'coin' : 'tap'); buzz(20);
+          setTimeout(() => { this.timEl.hidden = true; res({ q, inZone: d <= zone / 2 }); }, 250);
+        },
+      };
+    });
+  }
+  choice() {
+    return new Promise((res) => {
+      this.choiceEl.hidden = false;
+      for (const b of this.choiceEl.querySelectorAll('button')) b.onclick = (e) => { e.stopPropagation(); this.choiceEl.hidden = true; sfx('click'); res(+b.dataset.i); };
+    });
+  }
+  // Duel de vitesse : tes tapes contre celles du bot, en direct.
+  async speedDuel(seconds = 3) {
+    const botRate = 5 + Math.random() * 3.5;
+    let mine = 0, t0 = null;
+    this.gauge(0.5);
+    await new Promise((res) => {
+      this.handlers = {
+        down: () => {
+          if (!t0) { t0 = performance.now(); const end = () => { const el = (performance.now() - t0) / 1000; const bot = botRate * Math.min(seconds, el); this.gauge(mine / Math.max(1, mine + bot), mine < bot); if (el >= seconds) { this.handlers = null; res(); } else requestAnimationFrame(end); }; end(); }
+          mine++; sfx('slam'); buzz(10);
+          this.fx.shake(0.12);
+        },
+      };
+    });
+    const bot = Math.round(botRate * seconds);
+    this.gauge(null);
+    return { mine, bot, win: mine > bot };
   }
 
   // Outil tenu en main : modèle 3D qui apparaît près de ta zone.
@@ -582,7 +635,156 @@ export class Minigames {
     setTimeout(() => { alive = false; this.dropTool(o); }, 1400);
     return { a, aim: null };
   }
+  // ------------------------------------------------------------ v0.4
+  async mg_boxe(a) {
+    const W = this.W;
+    const o = await this.tool('boxe', W.revealPoint(5, -0.6));
+    W.faceCamera(o, 0); o.rotateX(-Math.PI / 2);
+    this.open('TAPE LE PLUS VITE POSSIBLE ! (touche pour commencer)');
+    const r = await this.speedDuel(3);
+    this.fx.pop(o.position.clone().add(V(0, 1, 0)), `${r.mine} contre ${r.bot}`, r.win ? 'good big' : 'bad big', 1);
+    await wait(0.5);
+    await this.dropTool(o);
+    return { a, aim: { winner: r.win ? W.me : 1 - W.me, taps: [r.mine, r.bot] } };
+  }
+  async defendBox() {
+    this.A.skipUse = false;
+    this.open('LE BOT TE DÉFIE À LA BOXE ! TAPE VITE (touche pour commencer)');
+    const r = await this.speedDuel(3);
+    this.close();
+    return { winner: r.win ? this.W.me : 1 - this.W.me, taps: [r.mine, r.bot] };
+  }
+  async mg_foot(a) {
+    const W = this.W;
+    this.open('CHOISIS OÙ TIRER');
+    const shot = await this.choice();
+    const keeper = 1 - W.me;
+    const dog = [...W.models.values()].some((m) => m.kind === 'chien' && m.owner === keeper);
+    const dive = dog && Math.random() < 0.5 ? shot : Math.floor(Math.random() * 3);
+    this.A.skipUse = false;
+    return { a, aim: { goal: shot !== dive, shot, dive } };
+  }
+  async defendFoot() {
+    this.open('PENALTY DU BOT : CHOISIS OÙ PLONGER');
+    const dive = await this.choice();
+    this.close();
+    const shot = Math.floor(Math.random() * 3);
+    return { goal: shot !== dive, shot, dive };
+  }
+  async mg_basket(a) {
+    const W = this.W;
+    const o = await this.tool('basket', W.launchPos(W.me).add(V(0, 0.6, -0.5)));
+    this.open('ARRÊTE L’AIGUILLE DANS LE VERT');
+    const storm = W.storm;
+    const r = await this.timing({ speed: storm ? 1.9 : 1.4, zone: storm ? 0.15 : 0.22 });
+    const hoop = V(0, 2.4, W.zs(1 - W.me) * 4.2);
+    sfx('whoosh');
+    await all(this.A.arc(o, r.inZone ? hoop : hoop.clone().add(V(0.7, 0.2, 0)), 1.6, 0.6, ease.outQuad), this.A.spin(o, 'x', 2, 0.6));
+    this.fx.pop(hoop.clone().add(V(0, 0.6, 0)), r.inZone ? 'PANIER !' : 'RATÉ…', r.inZone ? 'gold big' : 'bad big', 1);
+    if (r.inZone) { sfx('sparkle'); this.fx.ring(hoop, { color: '#f77f00', radius: 1, dur: 0.4, y: hoop.y }); } else sfx('clink');
+    await wait(0.3);
+    this.dropTool(o);
+    return { a, aim: { score: r.inZone } };
+  }
+  async mg_bowling(_a, acts) {
+    const W = this.W;
+    const cols = acts.map((x) => x.tgt.x);
+    let col = cols[Math.floor(cols.length / 2)];
+    const sy = W.me === 0 ? 4.7 : -0.7;
+    const o = await this.tool('bowling', W.cellPos(col, sy).setY(0.05));
+    const mark = () => { W.markCells([0, 1, 2, 3, 4].map((y) => ({ x: col, y }))); tween(o.position, (({ x, z }) => ({ x, z }))(W.cellPos(col, sy)), 0.12); };
+    mark();
+    this.open('GLISSE POUR CHOISIR LA COLONNE, PUIS LANCE');
+    let start = null;
+    this.handlers = {
+      down: (e) => { start = e.clientX; },
+      move: (e) => {
+        if (start == null) return;
+        const step = Math.round((e.clientX - start) / 50);
+        if (step) {
+          const idx = Math.max(0, Math.min(cols.length - 1, cols.indexOf(col) + Math.sign(step) * W.zs(W.me)));
+          if (cols[idx] !== col) { col = cols[idx]; sfx('tick'); mark(); }
+          start = e.clientX;
+        }
+      },
+      up: () => { start = null; },
+    };
+    await this.button('LANCER');
+    this.handlers = null;
+    W.clearCells();
+    this.W.scene.remove(o);
+    this.A.skipUse = false;
+    return { a: acts.find((x) => x.tgt.x === col), aim: null };
+  }
+  async mg_flechettes(a) {
+    const W = this.W;
+    const o = await this.tool('flechettes', W.revealPoint(7, 0.6));
+    W.faceCamera(o, 0); o.rotateX(-Math.PI / 2);
+    const darts = [];
+    for (let i = 0; i < 3; i++) {
+      this.open(`FLÉCHETTE ${i + 1}/3 : ARRÊTE L’AIGUILLE AU CENTRE`);
+      const r = await this.timing({ speed: 1.6 + i * 0.25, zone: 0.12 });
+      const pts = r.q >= 0.85 ? 3 : r.q >= 0.5 ? 2 : r.q > 0.1 ? 1 : 0;
+      darts.push(pts);
+      sfx('clink');
+      this.fx.pop(o.position.clone().add(V((i - 1) * 0.5, 0.9, 0)), pts ? '+' + pts : 'RATÉ', pts === 3 ? 'gold big' : pts ? 'good big' : 'muted big', 0.9);
+    }
+    await wait(0.3);
+    this.dropTool(o);
+    return { a, aim: { darts } };
+  }
+  async mg_glacon(a) {
+    const t = this.W.posForTarget(a.tgt);
+    const o = await this.tool('glacon', t.clone().add(V(0.3, 0.9, 0)));
+    this.open('MAINTIENS POUR GELER');
+    await this.hold(0.7, (v, down) => { if (down && Math.random() < 0.5) this.fx.burst(t.clone(), { n: 4, colors: ['#caf0f8', '#ffffff'], speed: 1, up: 1, size: 0.12, life: 0.4 }); o.rotation.y += 0.1; });
+    await this.dropTool(o);
+    return { a, aim: null };
+  }
+  async mg_taser(a) {
+    const W = this.W;
+    const at = W.avatars[a.tgt.p].position.clone().add(V(0.6, 1.1, 0.3));
+    const o = await this.tool('taser', at);
+    this.open('MAINTIENS POUR CHARGER');
+    sfx('zap');
+    await this.hold(1.0, (v, down) => { if (down && Math.random() < 0.3 + v * 0.5) this.fx.burst(at, { n: 4, colors: ['#4cc9f0', '#ffffff'], speed: 1.5 + v * 2, up: 1, size: 0.1, life: 0.2 }); });
+    this.fx.flash('#4cc9f0', 0.4, 0.25);
+    await this.dropTool(o);
+    return { a, aim: null };
+  }
+  async mg_lancepierre(a) {
+    const W = this.W;
+    const o = await this.tool('lancepierre', W.launchPos(W.me).add(V(0, 0.3, -0.3)));
+    this.open('ARRÊTE L’AIGUILLE DANS LE VERT POUR VISER JUSTE');
+    const r = await this.timing({ speed: 1.5, zone: 0.24 });
+    const to = W.posForTarget(a.tgt);
+    const pebble = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), mat('#6c757d'));
+    pebble.position.copy(o.position).add(V(0, 0.8, 0)); W.scene.add(pebble);
+    sfx('whoosh');
+    await this.A.arc(pebble, r.inZone ? to : to.clone().add(V(0.9, 0, 0.7)), 1, 0.35, ease.linear);
+    W.scene.remove(pebble);
+    if (!r.inZone) this.fx.pop(to.clone().add(V(0, 0.8, 0)), 'RATÉ', 'muted big', 0.8);
+    this.dropTool(o);
+    return { a, aim: { hit: r.inZone } };
+  }
+  async mg_pile(a) {
+    this.open('LANCE LA PIÈCE : GLISSE VERS LE HAUT');
+    await this.swipes(1, () => {});
+    this.A.skipUse = false;
+    return { a, aim: null };
+  }
+  async mg_marteau(a) {
+    const t = this.W.posForTarget(a.tgt);
+    const o = await this.tool('marteau', t.clone().add(V(0.4, 1.1, 0)));
+    this.open('FRAPPE QUAND L’AIGUILLE EST DANS LE VERT');
+    const r = await this.timing({ speed: 1.7, zone: 0.2 });
+    await tween(o.rotation, { z: 1.2 }, 0.12, ease.inQuad);
+    sfx(r.inZone ? 'boom' : 'clink'); this.fx.shake(r.inZone ? 0.6 : 0.2); buzz(60);
+    if (!r.inZone) this.fx.pop(t.clone().add(V(0, 0.8, 0)), 'ÇA REBONDIT', 'muted big', 0.8);
+    await this.dropTool(o);
+    return { a, aim: { ok: r.inZone } };
+  }
 }
 
-export const MINIGAME_KINDS = new Set(['flingue', 'billard', 'peche', 'briquet', 'tronco', 'seau', 'aimant', 'engrais', 'photocop', 'pelle', 'de', 'sablier', 'ventilo']);
+export const MINIGAME_KINDS = new Set(['flingue', 'billard', 'peche', 'briquet', 'tronco', 'seau', 'aimant', 'engrais', 'photocop', 'pelle', 'de', 'boxe', 'foot', 'basket', 'bowling', 'flechettes', 'glacon', 'taser', 'lancepierre', 'pile', 'marteau']);
 export { CELL };

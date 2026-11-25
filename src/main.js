@@ -12,7 +12,7 @@ import { clock, animate, ease } from './view/tween.js';
 import { objectCanvas, battleCanvas, backCanvasGet } from './view/cards.js';
 import { initAudio, sfx, setSound, buzz, setHaptics } from './view/audio.js';
 import { KINDS, KIND_IDS } from './engine/kinds.js';
-import { newGame, nextRound, act, draw, listActions, drainEvents, tgtKey, getEnt, cardValue, bonus } from './engine/engine.js';
+import { newGame, nextRound, act, draw, listActions, drainEvents, tgtKey, getEnt, cardValue, bonus, isWet } from './engine/engine.js';
 import { chooseAction } from './engine/bot.js';
 
 const $ = (id) => document.getElementById(id);
@@ -61,7 +61,7 @@ class UI {
     el.hidden = this.winStreak < 2;
     if (this.winStreak >= 2) { el.textContent = 'SÉRIE ×' + this.winStreak; el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
   }
-  onRound() {}
+  onRound() { if (this.S) this.renderOpp(); }
   discover(kind) {
     if (seen.has(kind)) return;
     seen.add(kind); store.set('seen', [...seen]);
@@ -79,7 +79,7 @@ class UI {
     this.refreshGlobals();
     const real = S.players[this.me].hand;
     if (real.length !== this.hand.length || real.some((c, i) => c.id !== this.hand[i]?.id)) { this.hand = real.map((c) => ({ ...c })); this.renderHand(); }
-    if (S.players[1 - this.me].hand.length !== this.oppCount) { this.oppCount = S.players[1 - this.me].hand.length; this.renderOpp(); }
+    if (S.players[1 - this.me].hand.length !== this.oppCount || S.reveal?.[this.me] !== $('oppHand').classList.contains('revealed')) { this.oppCount = S.players[1 - this.me].hand.length; this.renderOpp(); }
   }
   prompt(text) { const p = $('prompt'); p.textContent = text; p.classList.toggle('on', !!text); }
 
@@ -132,12 +132,15 @@ class UI {
     });
   }
   setPlayable(set) { this.playable = set; this.layoutHand(); }
+  revealOpp() { this.renderOpp(); }
   renderOpp(fresh = false) {
     const box = $('oppHand');
     box.innerHTML = '';
+    const shown = this.S?.reveal?.[this.me] ? this.S.players[1 - this.me].hand : null;
+    box.classList.toggle('revealed', !!shown);
     for (let i = 0; i < this.oppCount; i++) {
       const im = document.createElement('img');
-      im.src = backImg(); im.alt = '';
+      im.src = shown?.[i] ? cardURL(shown[i].kind) : backImg(); im.alt = '';
       im.style.setProperty('--r', ((i - (this.oppCount - 1) / 2) * 5) + 'deg');
       if (fresh && i === this.oppCount - 1) im.className = 'enter';
       box.appendChild(im);
@@ -171,19 +174,26 @@ function infoFor(pick) {
     if (e.kind === 'bombe') extra = ` Explose dans ${e.timer} tour${e.timer > 1 ? 's' : ''}.`;
     if (e.kind === 'arbre') extra = ` Pousse : ${e.stage}/3.`;
     if (e.kind === 'trounoir') extra = ` Encore ${e.timer} tour${e.timer > 1 ? 's' : ''}.`;
-    if (['reine', 'roi', 'tour', 'pion'].includes(e.kind) && mine) extra = ' Touche-la pendant ton tour pour la déplacer.';
+    if (['reine', 'roi', 'tour', 'pion', 'cavalier', 'fou'].includes(e.kind) && mine) extra = ' Touche-la pendant ton tour pour la déplacer.';
     openNote({ kind: e.kind, short: KINDS[e.kind].short + extra, title: `${KINDS[e.kind].name}${mine ? '' : ' (adverse)'}` });
   } else if (pick.t === 'card') {
     const pl = S.players[pick.p];
     if (!pl.card) return;
     const v = cardValue(S, pick.p), b = bonus(S, pick.p);
-    let short = `Vaut ${v}.`;
+    let short = pl.red ? 'Carton rouge : elle ne compte pas.' : `Vaut ${v}.`;
+    if (pl.card.frozen) short += ' Gelée : sa valeur ne bouge plus.';
     if (b > 0) short += ` Le Roi ajoute +${b}.`;
     if (b < 0) short += ' Malheur : −1.';
     openNote({ card: pl.card, title: pick.p === game.me ? 'Ta carte' : `Carte de ${pl.name}`, short });
   } else if (pick.t === 'player') {
     const pl = S.players[pick.p];
-    openNote({ title: pl.name, short: `${pl.pts} points · ${pl.hand.length} carte${pl.hand.length > 1 ? 's' : ''} en main${pl.dead ? ' · mort ce tour' : ''}.` });
+    const st = [];
+    if (pl.dead) st.push('mort ce tour');
+    if (pl.stunned) st.push('assommé');
+    if (isWet(S, pick.p)) st.push('mouillé');
+    if (pl.yellow) st.push('1 carton jaune');
+    if (pl.red) st.push('carton rouge');
+    openNote({ title: pl.name, short: `${pl.pts} points · ${pl.hand.length} carte${pl.hand.length > 1 ? 's' : ''} en main${st.length ? ' · ' + st.join(', ') : ''}.` });
   } else if (pick.t === 'deck') {
     openNote({ title: pick.p === game.me ? 'Ta pioche' : 'Sa pioche', short: `${S.players[pick.p].deck.length} cartes. Des objets s’y cachent.` });
   } else if (pick.t === 'grave') {
@@ -253,7 +263,14 @@ const game = {
     }
     if (S.phase === 'action') {
       if (S.turn === this.me) this.myTurn();
-      else this.botLater(() => { const c = chooseAction(S, S.turn); act(S, S.turn, c ? c.a : null, c ? c.aim : null); }, 650);
+      else this.botLater(async () => {
+        const c = chooseAction(S, S.turn);
+        let aim = c ? c.aim : null;
+        // le bot te défie : tu participes au duel
+        if (c && c.a.type === 'card' && c.a.kind === 'boxe') aim = await mg.defendBox();
+        if (c && c.a.type === 'card' && c.a.kind === 'foot') aim = await mg.defendFoot();
+        act(S, S.turn, c ? c.a : null, aim);
+      }, 650);
     }
   },
 
@@ -261,7 +278,7 @@ const game = {
     ui.prompt('');
     setTimeout(async () => {
       if (!this.alive) return;
-      fn();
+      await fn();
       await this.flush();
       this.step();
     }, ms + Math.random() * 300);
@@ -306,7 +323,7 @@ const game = {
     if (!acts.length) return;
     const kind = acts[0].kind;
     const play = KINDS[kind].play;
-    if (kind === 'flingue' || kind === 'billard') return this.commit(acts[0], acts);
+    if (kind === 'flingue' || kind === 'billard' || kind === 'bowling') return this.commit(acts[0], acts);
     if (play !== 'target' && play !== 'cell') return this.commit(acts[0], acts);
     if (kind === 'pelle') return this.pickGrave(acts);
     this.reset();
@@ -503,7 +520,7 @@ function bindHandCard(el) {
     let a = pick ? acts.find((x) => tgtKey(x.tgt) === tgtKey(pick)) : null;
     if (!a && cell) a = acts.find((x) => x.tgt.t === 'cell' && x.tgt.x === cell.x && x.tgt.y === cell.y);
     if (!a && e.clientY < $('oppHand').getBoundingClientRect().bottom + 20) a = acts.find((x) => x.tgt.t === 'hand');
-    if (a && a.kind !== 'flingue' && a.kind !== 'billard') game.commit(a, acts);
+    if (a && !['flingue', 'billard', 'bowling'].includes(a.kind)) game.commit(a, acts);
     else game.begin(hid);
   });
   el.addEventListener('pointercancel', () => { start = null; drag = false; el.classList.remove('drag'); });
@@ -528,8 +545,8 @@ function rulesHTML() {
   <ul class="rules">
     <li><b>Pioche</b> : touche ta pioche, puis glisse la carte pour la retourner.</li>
     <li><b>Carte normale</b> : c’est ta carte du pli. La plus forte gagne +1 point.</li>
-    <li><b>Objet</b> : il va dans ta main, et tu repioches.</li>
-    <li><b>Ton tour</b> : joue des objets (une fois chacun), bouge une pièce d’échecs, ou passe.</li>
+    <li><b>Objets</b> : tu commences avec 2 objets. Chaque tour, tu pioches au moins un objet avant ta carte normale.</li>
+    <li><b>Ton tour</b> : joue des objets (une fois chacun), bouge une pièce d’échecs, ou passe. Certains objets se jouent avec un geste : vise, tape, maintiens…</li>
     <li><b>Égalité</b> : BATAILLE, le pli suivant vaut plus.</li>
     <li><b>Mort</b> : tu perds le pli et 2 points.</li>
     <li><b>Victoire</b> : ${settings.target} points.</li>

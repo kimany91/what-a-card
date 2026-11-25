@@ -10,7 +10,7 @@ export const BOMB_PENALTY = 1;
 export const HAND_MAX = 8;
 export const OBJ_CHANCE = 0.35;
 export const SUITS = ['pique', 'coeur', 'carreau', 'trefle'];
-export const CHESS = ['reine', 'roi', 'tour', 'pion'];
+export const CHESS = ['reine', 'roi', 'tour', 'pion', 'cavalier', 'fou'];
 
 let R = Math.random;
 export const setRandom = (fn) => { R = fn; };
@@ -38,12 +38,12 @@ export function newGame({ names = ['Toi', 'Le Bot'], target = 20 } = {}) {
     round: 0, phase: 'idle', target,
     players: names.map((name, i) => ({
       name, deck: deck.slice(i * 26, (i + 1) * 26), hand: [], pts: 0, dead: false,
-      card: null, malheur: 0, objRun: 0,
+      card: null, malheur: 0, objRun: 0, wet: 0, stunned: false, yellow: 0, red: false,
     })),
     ents: [], globals: [], pot: [], potTies: 0, grave: [], pool: [],
     nextId: 1000, cardId: id, handId: 1, initiative: 0, turn: null,
     drawn: [false, false], passes: [false, false], moved: [false, false], blocked: [false, false],
-    freeze: null, collapse: false, result: null, winner: null, ev: [], log: [], logId: 0,
+    freeze: null, collapse: false, result: null, winner: null, ev: [], log: [], logId: 0, reveal: [false, false],
   };
 }
 
@@ -69,6 +69,7 @@ const owns = (S, p, kind) => S.ents.find((e) => e.owner === p && e.kind === kind
 export const globalOn = (S, kind) => S.globals.some((g) => g.kind === kind);
 const edgeDist = (e) => Math.min(e.x, e.y, N - 1 - e.x, N - 1 - e.y);
 export const hasCard = (S, p) => !!P(S, p).card && !P(S, p).dead;
+export const isWet = (S, p) => (P(S, p).wet > 0 || globalOn(S, 'orage')) && !owns(S, p, 'parapluie');
 const label = (S, e) => `${KINDS[e.kind].name} (${nm(S, e.owner)})`;
 const at = (S, x, y) => S.ents.find((e) => e.zone === 'board' && e.x === x && e.y === y);
 const isPiece = (e) => CHESS.includes(e.kind);
@@ -111,7 +112,7 @@ const CAUSE = {
   capture: 'se fait prendre', fall: 'tombe de la table', shot: 'se fait tirer dessus', burn: 'part en fumée',
   blast: 'saute dans l’explosion', cut: 'se fait découper', hole: 'disparaît dans le trou noir', cat: 'se fait pousser par le chat',
   wind: 's’envole', wash: 'est emportée par l’eau', defused: 'est désamorcée', flee: 's’enfuit', short: 'court-circuite',
-  revive: 'se décharge', collapse: 's’effondre', broken: 'se brise', harvest: 'donne ses fruits',
+  revive: 'se décharge', collapse: 's’effondre', broken: 'se brise', harvest: 'donne ses fruits', bowl: 'se fait renverser par la boule', smash: 'vole en éclats',
 };
 
 function destroy(S, e, cause, toGrave = true) {
@@ -136,6 +137,12 @@ function losePts(S, p, n, cause, text) {
 function kill(S, p, cause) {
   const pl = P(S, p);
   if (pl.dead) return;
+  const dog = owns(S, p, 'chien');
+  if (dog && cause === 'shot') {
+    emit(S, 'shield', { p, by: dog.id, kind: 'chien' }, `Le Chien de ${pl.name} prend la balle à sa place !`);
+    destroy(S, dog, 'shot');
+    return;
+  }
   const d = owns(S, p, 'defib');
   if (d) {
     if (d.wet > 0) destroy(S, d, 'short');
@@ -183,6 +190,7 @@ function promote(S, e) {
 function modCard(S, p, delta, cause) {
   const c = P(S, p).card;
   if (!c) return;
+  if (c.frozen) { emit(S, 'iceBlock', { p }, `La carte de ${nm(S, p)} est gelée : sa valeur ne bouge pas.`); return; }
   const from = c.v;
   c.v = Math.max(1, c.v + delta);
   emit(S, 'cardMod', { p, from, to: c.v, cause, card: clone(c) }, `Carte de ${nm(S, p)} : ${from} → ${c.v}.`);
@@ -193,7 +201,7 @@ function addToHand(S, p, kind, from) {
   const card = { id: S.handId++, kind };
   pl.hand.push(card);
   emit(S, 'toHand', { p, card: clone(card), from }, from === 'draw' ? null : `${nm(S, p)} récupère ${KINDS[kind].name}.`);
-  if (pl.hand.length > HAND_MAX) {
+  if (pl.hand.length > HAND_MAX && !owns(S, p, 'coffre')) {
     const old = pl.hand.shift();
     S.grave.push(old.kind);
     emit(S, 'discard', { p, hid: old.id, kind: old.kind }, `Main pleine : ${KINDS[old.kind].name} part au cimetière.`);
@@ -203,13 +211,14 @@ function addToHand(S, p, kind, from) {
 // ---------------------------------------------------------------- valeurs
 
 export function bonus(S, p) {
+  if (P(S, p).card?.frozen) return 0;
   let b = boardEnts(S).filter((e) => e.kind === 'roi' && e.owner === p).length;
   if (P(S, p).malheur > 0) b -= 1;
   return b;
 }
 export function cardValue(S, p) {
   const pl = P(S, p);
-  if (!pl.card || pl.dead) return null;
+  if (!pl.card || pl.dead || pl.red) return null;
   return Math.max(1, pl.card.v + bonus(S, p));
 }
 export function outlook(S) {
@@ -231,10 +240,17 @@ export function outlook(S) {
 
 export function chessMoves(S, e) {
   const out = [];
-  const dirs = { reine: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], tour: [[1, 0], [-1, 0], [0, 1], [0, -1]] };
+  const dirs = { reine: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], tour: [[1, 0], [-1, 0], [0, 1], [0, -1]], fou: [[1, 1], [1, -1], [-1, 1], [-1, -1]] };
   const inside = (x, y) => x >= 0 && y >= 0 && x < N && y < N;
   const enemy = (o) => o && o.owner !== e.owner && isPiece(o);
-  if (e.kind === 'reine' || e.kind === 'tour') {
+  if (e.kind === 'cavalier') {
+    for (const [dx, dy] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) {
+      const x = e.x + dx, y = e.y + dy;
+      if (!inside(x, y)) continue;
+      const o = at(S, x, y);
+      if (!o) out.push({ x, y }); else if (enemy(o)) out.push({ x, y, cap: o.id });
+    }
+  } else if (e.kind === 'reine' || e.kind === 'tour' || e.kind === 'fou') {
     for (const [dx, dy] of dirs[e.kind]) {
       let x = e.x + dx, y = e.y + dy;
       while (inside(x, y)) {
@@ -278,7 +294,7 @@ function doMove(S, p, a) {
 const T = {
   card: (p) => ({ t: 'card', p }), player: (p) => ({ t: 'player', p }), hand: (p) => ({ t: 'hand', p }),
   ent: (e) => ({ t: 'ent', id: e.id }), self: () => ({ t: 'self' }), cell: (c) => ({ t: 'cell', x: c.x, y: c.y }),
-  grave: (i) => ({ t: 'grave', i }), miss: () => ({ t: 'miss' }),
+  grave: (i) => ({ t: 'grave', i }), miss: () => ({ t: 'miss' }), col: (x) => ({ t: 'col', x }),
 };
 export const tgtKey = (t) => `${t.t}:${t.p ?? ''}:${t.id ?? ''}:${t.i ?? ''}:${t.x ?? ''}:${t.y ?? ''}`;
 
@@ -290,6 +306,7 @@ export function describeTarget(S, t) {
   if (t.t === 'grave') return `${KINDS[S.grave[t.i]].name} (cimetière)`;
   if (t.t === 'cell') return 'l’échiquier';
   if (t.t === 'miss') return 'dans le vide';
+  if (t.t === 'col') return 'une colonne';
   return '';
 }
 
@@ -369,11 +386,12 @@ const CARDS = {
   briquet: {
     hostile: true,
     available: (S) => !globalOn(S, 'orage'),
-    targets: (S, p) => [...oppCard(S, p).filter((t) => P(S, t.p).card.r !== 14), ...not(S, (x) => (x.owner !== p && hasTag(x.kind, 'feu')) || x.kind === 'bombe').map(T.ent)],
+    targets: (S, p) => [...oppCard(S, p).filter((t) => P(S, t.p).card.r !== 14), ...not(S, (x) => (x.owner !== p && hasTag(x.kind, 'feu') && !isPiece(x)) || x.kind === 'bombe').map(T.ent)],
     apply(S, p, t) {
       emit(S, 'use', { p, kind: 'briquet', tgt: t }, `${nm(S, p)} met le feu à ${describeTarget(S, t)}.`);
       if (t.t === 'card') {
         const c = P(S, t.p).card;
+        if (c.frozen) { c.frozen = false; emit(S, 'melt', { p: t.p }, `La glace fond : la carte de ${nm(S, t.p)} est libérée.`); return; }
         if (c.wet > 0) { emit(S, 'fizzle', { tgt: t }, 'Trop mouillée, elle ne brûle pas.'); return; }
         P(S, t.p).card = null;
         emit(S, 'cardGone', { p: t.p, cause: 'burn' }, `Le ${cardName(c)} part en fumée !`);
@@ -386,9 +404,11 @@ const CARDS = {
   },
   seau: {
     hostile: true,
-    targets: (S, p) => [...(hasCard(S, p) ? [T.card(p)] : []), ...oppCard(S, p), ...not(S, () => true).map(T.ent)],
+    targets: (S, p) => [...(hasCard(S, p) ? [T.card(p)] : []), ...oppCard(S, p), ...(P(S, other(p)).dead ? [] : [T.player(other(p))]), ...not(S, () => true).map(T.ent)],
     apply(S, p, t) {
       emit(S, 'use', { p, kind: 'seau', tgt: t }, `${nm(S, p)} renverse le Seau sur ${describeTarget(S, t)}.`);
+      if ((t.t === 'card' || t.t === 'player') && owns(S, t.p, 'parapluie')) { emit(S, 'shield', { p: t.p, by: owns(S, t.p, 'parapluie').id, kind: 'parapluie' }, `Le Parapluie de ${nm(S, t.p)} le protège.`); return; }
+      if (t.t === 'player') { P(S, t.p).wet = 2; emit(S, 'wetPlayer', { p: t.p }, `${nm(S, t.p)} est trempé !`); return; }
       if (t.t === 'card') { P(S, t.p).card.wet = 3; modCard(S, t.p, -2, 'wet'); return; }
       const x = getEnt(S, t.id);
       if (x.kind === 'bombe') destroy(S, x, 'defused');
@@ -494,6 +514,195 @@ const CARDS = {
       addToHand(S, p, kind, 'grave');
     },
   },
+
+  // ---------------------------------------------------------------- v0.4
+  cavalier: { targets: selfOnly, apply: (S, p) => spawn(S, 'cavalier', p) },
+  fou: { targets: selfOnly, apply: (S, p) => spawn(S, 'fou', p) },
+  chien: { targets: selfOnly, apply: (S, p) => spawn(S, 'chien', p) },
+  coffre: { targets: selfOnly, apply: (S, p) => spawn(S, 'coffre', p) },
+  parapluie: { targets: selfOnly, apply: (S, p) => spawn(S, 'parapluie', p) },
+  rocher: { targets: (S) => freeCells(S).map(T.cell), apply: (S, p, t) => spawn(S, 'rocher', p, 'card', {}, { x: t.x, y: t.y }) },
+
+  // Duel de boxe : aim.winner vient du mini-jeu (sinon tirage).
+  boxe: {
+    available: (S, p) => !P(S, other(p)).dead,
+    targets: selfOnly,
+    apply(S, p, t, aim) {
+      const o = other(p);
+      let w = aim?.winner;
+      if (w == null) w = P(S, o).stunned ? p : P(S, p).stunned ? o : (R() < 0.5 ? p : o);
+      if (P(S, o).stunned) w = p;
+      emit(S, 'use', { p, kind: 'boxe', tgt: T.self(), winner: w, taps: aim?.taps ?? null }, `${nm(S, p)} défie ${nm(S, o)} à la boxe !`);
+      emit(S, 'popup', { p: w, word: 'K.O.' }, `${nm(S, w)} gagne le duel de boxe.`);
+      modCard(S, w, 2, 'box');
+      modCard(S, other(w), -2, 'box');
+    },
+  },
+  // Penalty : aim.goal vient du mini-jeu.
+  foot: {
+    available: (S, p) => !P(S, other(p)).dead,
+    targets: selfOnly,
+    apply(S, p, t, aim) {
+      const o = other(p);
+      let goal = aim?.goal;
+      if (goal == null) goal = R() < (owns(S, o, 'chien') ? 0.45 : 0.62);
+      if (P(S, o).stunned) goal = true;
+      emit(S, 'use', { p, kind: 'foot', tgt: T.self(), goal, shot: aim?.shot ?? null, dive: aim?.dive ?? null }, goal ? `BUT de ${nm(S, p)} !` : `Arrêt de ${nm(S, o)} !`);
+      const w = goal ? p : o;
+      P(S, w).pts += 1;
+      emit(S, 'pts', { p: w, delta: 1, cause: goal ? 'goal' : 'save', total: P(S, w).pts }, `${nm(S, w)} : +1 point.`);
+      if (P(S, w).pts >= S.target) endGame(S, w, `${nm(S, w)} atteint ${S.target} points !`);
+    },
+  },
+  basket: {
+    available: (S, p) => hasCard(S, p),
+    targets: selfOnly,
+    apply(S, p, t, aim) {
+      let score = aim?.score;
+      if (score == null) score = R() < (globalOn(S, 'orage') ? 0.35 : 0.5);
+      const pool = boardEnts(S).filter((e) => e.kind !== 'rocher' && e.kind !== 'tour');
+      const victim = !score && pool.length ? pick(pool) : null;
+      emit(S, 'use', { p, kind: 'basket', tgt: T.self(), score, victim: victim?.id ?? null }, score ? `Panier de ${nm(S, p)} !` : `${nm(S, p)} rate le panier.`);
+      if (score) modCard(S, p, 3, 'basket');
+      else if (victim) destroy(S, victim, 'fall');
+    },
+  },
+  bowling: {
+    available: (S) => boardEnts(S).length > 0,
+    targets: (S) => [0, 1, 2, 3, 4].filter((x) => boardEnts(S).some((e) => e.x === x)).map(T.col),
+    apply(S, p, t) {
+      const dir = p === 0 ? -1 : 1;
+      const hits = [];
+      let stop = null;
+      for (let y = p === 0 ? N - 1 : 0; y >= 0 && y < N; y += dir) {
+        const e = at(S, t.x, y);
+        if (!e) continue;
+        if (e.kind === 'tour' || e.kind === 'rocher') { stop = { id: e.id, y }; break; }
+        hits.push(e.id);
+      }
+      emit(S, 'use', { p, kind: 'bowling', tgt: t, hits, stop }, `${nm(S, p)} lance la boule de bowling !`);
+      for (const id of hits) {
+        const e = getEnt(S, id);
+        if (!e) continue;
+        if (e.kind === 'bombe') explode(S, e); else destroy(S, e, 'bowl');
+      }
+      if (stop) emit(S, 'ricochet', { id: stop.id }, 'La boule s’arrête net.');
+      if (hits.length >= 3) emit(S, 'popup', { p, word: 'STRIKE !' });
+    },
+  },
+  flechettes: {
+    available: (S, p) => hasCard(S, p),
+    targets: selfOnly,
+    apply(S, p, t, aim) {
+      const darts = aim?.darts ?? [0, 0, 0].map(() => pick([0, 1, 1, 2, 2, 3]));
+      const pts = Math.min(5, darts.reduce((a, b) => a + b, 0));
+      emit(S, 'use', { p, kind: 'flechettes', tgt: T.self(), darts, pts }, `${nm(S, p)} lance ses fléchettes : +${pts}.`);
+      if (pts) modCard(S, p, pts, 'darts');
+    },
+  },
+  glacon: {
+    targets: (S) => [0, 1].filter((q) => hasCard(S, q) && !P(S, q).card.frozen).map(T.card),
+    apply(S, p, t) {
+      emit(S, 'use', { p, kind: 'glacon', tgt: t }, `${nm(S, p)} gèle la carte de ${nm(S, t.p)}.`);
+      P(S, t.p).card.frozen = true;
+      emit(S, 'freeze', { p: t.p }, `La carte de ${nm(S, t.p)} est gelée.`);
+    },
+  },
+  taser: {
+    targets: (S, p) => (!P(S, other(p)).dead && !P(S, other(p)).stunned ? [T.player(other(p))] : []),
+    apply(S, p, t) {
+      emit(S, 'use', { p, kind: 'taser', tgt: t, wet: isWet(S, t.p) }, `${nm(S, p)} sort le Taser !`);
+      if (isWet(S, t.p)) kill(S, t.p, 'taser');
+      else { P(S, t.p).stunned = true; emit(S, 'stun', { p: t.p }, `${nm(S, t.p)} est assommé : plus d’objet ce tour.`); }
+    },
+  },
+  echange: {
+    available: (S, p) => hasCard(S, p) && hasCard(S, other(p)) && !P(S, p).card.frozen && !P(S, other(p)).card.frozen,
+    targets: () => [T.self()],
+    apply(S, p) {
+      const o = other(p);
+      if (owns(S, o, 'tour')) { emit(S, 'block', { p: o, tower: owns(S, o, 'tour').id }, `La Tour de ${nm(S, o)} bloque l’échange.`); return; }
+      const a = P(S, p).card, b = P(S, o).card;
+      P(S, p).card = b; P(S, o).card = a;
+      emit(S, 'swap', { p }, `${nm(S, p)} échange les cartes du pli !`);
+    },
+  },
+  jaune: {
+    targets: (S, p) => (P(S, other(p)).red ? [] : [T.player(other(p))]),
+    apply(S, p, t) {
+      const pl = P(S, t.p);
+      pl.yellow++;
+      emit(S, 'use', { p, kind: 'jaune', tgt: t }, `Carton jaune pour ${pl.name} !`);
+      if (pl.yellow >= 2) {
+        pl.yellow = 0; pl.red = true;
+        emit(S, 'red', { p: t.p }, `CARTON ROUGE : ${pl.name} perd le pli en cours.`);
+      } else emit(S, 'yellow', { p: t.p, count: pl.yellow });
+    },
+  },
+  missile: {
+    targets: selfOnly,
+    apply(S, p) {
+      const best = Math.max(P(S, 0).pts, P(S, 1).pts);
+      let victims = [0, 1].filter((q) => P(S, q).pts === best);
+      emit(S, 'use', { p, kind: 'missile', tgt: T.self(), victims }, `${nm(S, p)} lance un missile sur le joueur en tête !`);
+      for (let v of victims) {
+        const m = v !== p ? owns(S, v, 'miroir') : null;
+        if (m) { emit(S, 'reflect', { p: v, mirror: m.id, back: p }, `Le Miroir de ${nm(S, v)} renvoie le missile !`); destroy(S, m, 'broken'); v = p; }
+        emit(S, 'missileHit', { p: v }, null);
+        losePts(S, v, 2, 'missile', `Le missile frappe ${nm(S, v)} : −2 points.`);
+        const items = frontEnts(S, v).filter((x) => x.kind !== 'banane');
+        if (items.length) destroy(S, pick(items), 'blast');
+      }
+    },
+  },
+  lancepierre: {
+    targets: (S, p) => not(S, (x) => x.owner !== p || x.zone === 'board').map(T.ent),
+    apply(S, p, t, aim) {
+      const x = getEnt(S, t.id);
+      const hit = aim?.hit ?? R() < 0.7;
+      emit(S, 'use', { p, kind: 'lancepierre', tgt: t, hit }, `${nm(S, p)} tire au lance-pierre sur ${label(S, x)}.`);
+      if (!hit) { emit(S, 'miss', { tgt: t }, 'Raté !'); return; }
+      if (hasTag(x.kind, 'pierre') || x.kind === 'coffre') { emit(S, 'ricochet', { id: x.id }, 'La bille ricoche.'); return; }
+      if (x.kind === 'bombe') { explode(S, x); return; }
+      if (x.zone === 'front') { destroy(S, x, x.kind === 'miroir' ? 'broken' : 'shot'); return; }
+      const dy = p === 0 ? -1 : 1;
+      const ny = x.y + dy;
+      if (ny < 0 || ny >= N) { destroy(S, x, 'fall'); return; }
+      if (!at(S, x.x, ny)) { x.y = ny; emit(S, 'move', { id: x.id, x: x.x, y: ny, cause: 'push' }); }
+      else emit(S, 'popup', { p, word: 'BLOQUÉ' });
+    },
+  },
+  pile: {
+    available: (S, p) => hasCard(S, p),
+    targets: selfOnly,
+    apply(S, p, t, aim) {
+      const heads = aim?.heads ?? R() < 0.5;
+      emit(S, 'use', { p, kind: 'pile', tgt: T.self(), heads }, heads ? `PILE ! +2 pour ${nm(S, p)}.` : `FACE… −2 pour ${nm(S, p)}.`);
+      modCard(S, p, heads ? 2 : -2, 'coin');
+    },
+  },
+  loupe: {
+    available: (S, p) => !S.reveal[p] && P(S, other(p)).hand.length > 0,
+    targets: selfOnly,
+    apply(S, p) {
+      S.reveal[p] = true;
+      emit(S, 'use', { p, kind: 'loupe', tgt: T.self() }, `${nm(S, p)} regarde la main de ${nm(S, other(p))} à la Loupe.`);
+      emit(S, 'reveal', { p, hand: clone(P(S, other(p)).hand) });
+    },
+  },
+  marteau: {
+    targets: (S, p) => [
+      ...not(S, (x) => hasTag(x.kind, 'pierre') || hasTag(x.kind, 'verre') || x.kind === 'coffre').filter((x) => x.owner !== p || x.kind === 'rocher').map(T.ent),
+      ...[0, 1].filter((q) => P(S, q).card?.frozen).map(T.card)],
+    apply(S, p, t, aim) {
+      const ok = aim?.ok ?? R() < 0.75;
+      emit(S, 'use', { p, kind: 'marteau', tgt: t, ok }, `${nm(S, p)} abat le Marteau !`);
+      if (!ok) { emit(S, 'miss', { tgt: t }, 'Le marteau rebondit.'); return; }
+      if (t.t === 'card') { P(S, t.p).card.frozen = false; emit(S, 'melt', { p: t.p, smash: true }, 'La glace vole en éclats.'); return; }
+      const x = getEnt(S, t.id);
+      destroy(S, x, x.kind === 'miroir' ? 'broken' : 'smash');
+    },
+  },
 };
 
 function setGlobal(S, p, kind) {
@@ -504,6 +713,8 @@ function setGlobal(S, p, kind) {
 }
 
 function steal(S, from, to, pred, cause) {
+  const safe = owns(S, from, 'coffre');
+  if (safe) { emit(S, 'shield', { p: from, by: safe.id, kind: 'coffre' }, `Le Coffre-fort protège la main de ${nm(S, from)}.`); return; }
   const pool = P(S, from).hand.filter(pred);
   if (!pool.length) { emit(S, 'miss', { tgt: T.hand(from) }, cause === 'magnet' ? 'Rien en métal dans sa main.' : 'Main vide.'); return; }
   const c = pick(pool);
@@ -521,7 +732,7 @@ function takeEnt(S, x, p, cause) {
 export function listActions(S, p) {
   if (S.phase !== 'action' || S.turn !== p || P(S, p).dead || S.blocked[p]) return [];
   const out = [];
-  for (const c of P(S, p).hand) {
+  if (!P(S, p).stunned) for (const c of P(S, p).hand) {
     const def = CARDS[c.kind];
     if (def.available && !def.available(S, p)) continue;
     for (const t of def.targets(S, p)) out.push({ type: 'card', hid: c.id, kind: c.kind, tgt: t, key: `c${c.id}|${tgtKey(t)}` });
@@ -620,20 +831,24 @@ function settle(S) {
 
 // ---------------------------------------------------------------- pioche
 
+function poolDraw(S) {
+  if (!S.pool.length) {
+    const all = [];
+    for (const k of KIND_IDS) for (let i = 0; i < KINDS[k].weight; i++) all.push(k);
+    S.pool = shuffle(all);
+  }
+  return S.pool.pop();
+}
+
 export const canDraw = (S, p) => S.phase === 'draw' && S.turn === p && !S.drawn[p];
 
 export function draw(S, p) {
   if (!canDraw(S, p)) return false;
   const pl = P(S, p);
-  // main vide : on pioche toujours au moins un objet avant la carte normale
-  const forceObj = S.round >= 2 && pl.objRun === 0 && pl.hand.length === 0;
-  if (S.round >= 2 && (forceObj || (pl.objRun < 3 && R() < OBJ_CHANCE))) {
-    if (!S.pool.length) {
-      const all = [];
-      for (const k of KIND_IDS) for (let i = 0; i < KINDS[k].weight; i++) all.push(k);
-      S.pool = shuffle(all);
-    }
-    const kind = S.pool.pop();
+  // à partir du tour 2 : toujours au moins 1 objet avant la carte normale, parfois 2 ou 3
+  const extra = pl.objRun === 1 ? 0.7 : pl.objRun === 2 ? 0.35 : 0;
+  if (S.round >= 2 && (pl.objRun === 0 || R() < extra)) {
+    const kind = poolDraw(S);
     pl.objRun++;
     emit(S, 'draw', { p, obj: kind }, `${pl.name} pioche ${KINDS[kind].name}.`);
     addToHand(S, p, kind, 'draw');
@@ -662,6 +877,7 @@ export function startRound(S) {
   S.round++;
   S.result = null;
   emit(S, 'round', { round: S.round });
+  if (S.round === 1) for (let i = 0; i < 2; i++) for (const p of [0, 1]) addToHand(S, p, poolDraw(S), 'deal');
   const frozen = !!(S.freeze && S.freeze.round === S.round);
   for (let p = 0; p < 2; p++) {
     const pl = P(S, p);
@@ -673,7 +889,12 @@ export function startRound(S) {
     }
   }
   for (const e of S.ents) if (e.wet > 0 && !frozen) e.wet--;
-  for (const pl of S.players) if (pl.malheur > 0) pl.malheur--;
+  for (const pl of S.players) {
+    if (pl.malheur > 0) pl.malheur--;
+    if (pl.wet > 0) pl.wet--;
+    pl.stunned = false; pl.red = false;
+  }
+  S.reveal = [false, false];
   if (frozen) emit(S, 'frozen', { by: S.freeze.by }, `Le temps est figé : ${nm(S, other(S.freeze.by))} ne joue pas ce tour.`);
   else worldTick(S);
   if (S.phase === 'over') return;
@@ -704,6 +925,10 @@ function worldTick(S) {
       e.timer--;
       emit(S, 'tick', { id: e.id, timer: e.timer });
       if (e.timer <= 0) { S.collapse = true; destroy(S, e, 'collapse', false); }
+    } else if (e.kind === 'chat' && S.ents.some((d) => d.kind === 'chien')) {
+      const dog = S.ents.find((d) => d.kind === 'chien');
+      emit(S, 'dogChase', { id: e.id, dog: dog.id }, `Le Chien de ${nm(S, dog.owner)} chasse le Chat noir !`);
+      destroy(S, e, 'flee');
     } else if (e.kind === 'chat' && R() < 0.5) {
       const c = boardEnts(S).filter((o) => o !== e && o.kind !== 'trounoir' && edgeDist(o) === 0);
       if (c.length) { const v = pick(c); emit(S, 'catPush', { id: e.id, target: v.id }); destroy(S, v, 'cat'); }
