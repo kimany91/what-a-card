@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { tween, animate, ease, wait, freezeFrame, all } from './tween.js';
 import { sfx, buzz } from './audio.js';
 import { cueModel, boltGeo, mat, makeModel, OWNER } from './models.js';
-import { battleFace, setCardFace, makeCard, battleBack } from './cards.js';
+import { battleFace, makeCard } from './cards.js';
+import { CARD_TILT } from './world.js';
 import { KINDS } from '../engine/kinds.js';
 
 const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -57,6 +58,13 @@ export class Animator {
     return cs.size ? [...cs] : ['#888'];
   }
   async goHome(m, dur = 0.4) {
+    if (m.temp) {
+      const at = this.pos(m.obj);
+      this.fx.burst(at, { n: 18, color: '#ffffff', speed: 1.5, up: 1.5, size: 0.22, life: 0.5, gravity: 0, additive: false });
+      await this.scaleTo(m.obj, 0.01, 0.25, ease.inBack);
+      this.W.scene.remove(m.obj);
+      return;
+    }
     const t = this.W.entTarget(m);
     const ry = m.zone === 'side' && m.owner !== this.W.me ? Math.PI : 0;
     await all(
@@ -77,73 +85,17 @@ export class Animator {
   // ------------------------------------------------------------ tour
   async on_round(ev) { sfx('round'); this.ui.onRound(ev.round); }
 
-  async on_reveal(ev) {
-    const W = this.W, p = ev.p;
-    const c = W.makeBattleCard(ev.card, p);
-    W.cards[p] = c;
-    const start = W.deckPos(p).add(V(0, 0.4, 0));
-    c.position.copy(start);
-    c.rotation.set(0, 0, Math.PI);
-    sfx('whoosh');
-    W.decks[p].userData.set(Math.max(0, (W.decks[p].userData.count ?? 26) - 1));
-    const to = W.cardPos(p);
-    await all(this.arc(c, to, 1.6, 0.42, ease.outQuad), tween(c.rotation, { z: 0, x: TILT }, 0.42, ease.outCubic));
-    c.userData.revealed = true;
-    sfx('slam'); buzz(15);
-    this.fx.dust(to.clone().setY(0.05), 10);
-    this.fx.shake(0.18);
-    if (ev.card.gold) this.fx.sparkles(to, '#ffd166', 20);
-    await this.squash(c, 1, 0.18, 0.25);
-  }
-
-  async on_chaosReveal(ev) {
-    const W = this.W, p = ev.p;
-    const c = W.makeChaosCard(ev.kind, p);
-    W.chaos[p] = c;
-    const to = W.chaosPos(p);
-    c.position.copy(to).add(V(0, 5, 0));
-    c.rotation.set(TILT, 0, Math.PI);
-    sfx('whoosh');
-    await all(tween(c.position, { x: to.x, y: to.y, z: to.z }, 0.45, ease.inQuad), this.spin(c, 'y', 1, 0.45), tween(c.rotation, { z: 0 }, 0.45));
-    sfx('flip'); buzz(10);
-    this.fx.burst(to, { n: 22, color: KINDS[ev.kind].color, speed: 3, up: 2, size: 0.22, life: 0.6 });
-    this.fx.ring(to.clone().setY(0.05), { color: KINDS[ev.kind].color, radius: 1.6, dur: 0.4 });
-    c.userData.baseY = to.y; c.userData.idle = true;
-    this.ui.discover(ev.kind, to);
-    await this.squash(c, 1, 0.2, 0.25);
-  }
-
   async on_turn() {}
+  async on_drawTurn() {}
+  async on_actionTurn() {}
   async on_pass(ev) { sfx('tap'); await this.fx.pop(this.W.avatars[ev.p].position.clone().add(V(0, 1.9, 0)), 'PASSE', 'muted', 0.8); }
   async on_resolve() { await wait(0.15); }
-
-  async on_chaosFire(ev) {
-    const W = this.W, p = ev.p;
-    const color = KINDS[ev.kind].color;
-    if (ev.source === 'chaos' && W.chaos[p]) {
-      const c = W.chaos[p];
-      W.chaos[p] = null;
-      c.userData.idle = false;
-      sfx('sparkle');
-      await all(tween(c.position, { y: c.position.y + 1.3 }, 0.35, ease.outCubic), this.spin(c, 'y', 2, 0.45, ease.inCubic), this.scaleTo(c, 1.3, 0.35));
-      const at = this.pos(c);
-      await this.scaleTo(c, 0.001, 0.12, ease.inBack);
-      W.scene.remove(c);
-      this.fx.burst(at, { n: 50, colors: [color, '#ffffff', '#fff3b0'], speed: 4, up: 2, size: 0.3, life: 0.7, gravity: -2 });
-      this.fx.ring(at, { color, radius: 2, dur: 0.4, y: at.y });
-      this.fx.flash(color, 0.25, 0.25);
-      this.lastBurst = at;
-      buzz(20);
-    } else if (ev.source === 'copy') {
-      this.fx.burst(this.lastBurst || V(0, 1, 0), { n: 30, colors: [color, '#b9fbc0'], speed: 3, up: 3, size: 0.25 });
-    }
-  }
 
   // ------------------------------------------------------------ apparitions
   async on_spawn(ev) {
     const W = this.W, e = ev.ent;
     if (e.zone === 'board') await W.showBoard(true);
-    const from = this.lastBurst ? this.lastBurst.clone() : W.chaosPos(ev.p).add(V(0, 1, 0));
+    const from = this.lastBurst ? this.lastBurst.clone() : W.launchPos(ev.p);
     this.lastBurst = null;
     const m = W.addEnt(e, { at: from, scale: 0.01 });
     m.busy = true;
@@ -174,6 +126,7 @@ export class Animator {
   async on_destroy(ev) {
     const W = this.W, m = this.m(ev.id);
     if (!m) return;
+    if (m.fellOff) { W.removeEnt(ev.id); W.relayout(0.3); return; }
     m.busy = true;
     const o = m.obj, p = this.pos(o).add(V(0, 0.3, 0));
     const cols = this.colorsOf(m);
@@ -290,7 +243,17 @@ export class Animator {
     if (!m) return;
     m.x = ev.x; m.y = ev.y;
     const t = this.W.entTarget(m);
-    if (ev.cause === 'queen') { await tween(m.obj.position, { x: t.pos.x, z: t.pos.z, y: t.pos.y }, 0.15); return; }
+    if (ev.cause === 'chess') {
+      m.busy = true;
+      sfx('whoosh');
+      await all(this.arc(m.obj, t.pos, 1.4, 0.42, ease.inOutCubic), this.spin(m.obj, 'y', 1, 0.42));
+      sfx('slam'); buzz(ev.cap ? 60 : 20);
+      this.fx.dust(t.pos, ev.cap ? 18 : 8);
+      if (ev.cap) { this.fx.shake(0.6); this.W.punch(0.6); this.fx.ring(t.pos, { color: '#ffd166', radius: 1.8, dur: 0.35 }); }
+      await this.squash(m.obj, null, 0.25, 0.3);
+      m.busy = false;
+      return;
+    }
     if (ev.cause === 'push') sfx('whoosh');
     await tween(m.obj.position, { x: t.pos.x, z: t.pos.z, y: t.pos.y }, ev.cause === 'wind' ? 0.25 : 0.35, ease.outQuad);
     if (ev.cause === 'push') this.fx.pop(t.pos.clone().add(V(0, 0.9, 0)), 'RATÉ', 'muted', 0.8);
@@ -323,17 +286,25 @@ export class Animator {
 
   // ------------------------------------------------------------ actions
   async on_use(ev) {
-    const m = this.m(ev.id);
-    if (!m) return;
+    if (ev.p === this.W.me && this.skipUse) return;
+    const W = this.W;
+    const from = this.lastBurst ? this.lastBurst.clone() : W.launchPos(ev.p);
+    this.lastBurst = null;
+    const obj = new THREE.Group();
+    const model = makeModel(ev.kind);
+    obj.add(model); obj.userData.model = model;
+    obj.position.copy(from); obj.scale.setScalar(0.01);
+    W.scene.add(obj);
+    const m = { id: 'tmp', kind: ev.kind, owner: ev.p, obj, temp: true, busy: true };
+    sfx('spawn');
+    await this.scaleTo(obj, 1, 0.3, ease.outBack);
     const fn = this['use_' + ev.kind];
-    this.ui.onUse?.(ev);
     if (ev.blocked) {
-      m.busy = true;
       await this.lift(m, this.near(this.pos(m.obj), this.targetPos(ev.tgt), 1.2).setY(1.2), 0.35, 1);
       this.goHome(m);
       return;
     }
-    if (fn) await fn.call(this, ev, m);
+    if (fn) await fn.call(this, ev, m); else this.goHome(m);
   }
 
   async use_flingue(ev, m) {
@@ -412,54 +383,6 @@ export class Animator {
     this.goHome(m, 0.4);
   }
 
-  async use_billard(ev, m) {
-    const W = this.W, o = m.obj, target = this.targetPos(ev.tgt).setY(0.4);
-    const side = W.zs(ev.p);
-    const start = V(target.x * 0.6, 0.4, side * 2.6);
-    await this.lift(m, start, 0.35, 0.9);
-    const cue = cueModel();
-    const dir = target.clone().sub(start).setY(0).normalize();
-    cue.quaternion.setFromUnitVectors(V(0, 1, 0), dir.clone().negate());
-    const back = start.clone().sub(dir.clone().multiplyScalar(0.35)).setY(0.45);
-    cue.position.copy(back).sub(dir.clone().multiplyScalar(0));
-    const tipOff = (d) => back.clone().sub(dir.clone().multiplyScalar(d));
-    cue.position.copy(tipOff(0.5));
-    cue.rotation.x += 0; W.scene.add(cue);
-    cue.scale.setScalar(0.6);
-    this.callout(m, 'COUP DE QUEUE');
-    await animate(0.35, (k) => cue.position.copy(tipOff(0.5 + k * 0.6)), ease.outQuad);
-    await animate(0.08, (k) => cue.position.copy(tipOff(1.1 - k * 1.1)), ease.inQuad);
-    sfx('clink'); buzz(25);
-    this.fx.burst(start, { n: 12, color: '#ffffff', speed: 2, up: 1, size: 0.15, life: 0.3 });
-    const dist = start.distanceTo(target);
-    const ballInner = o.userData.model.children[0];
-    animate(0.3, (k) => { cue.traverse((c) => { if (c.material) { c.material = c.material.clone(); c.material.transparent = true; c.material.opacity = 1 - k; } }); }).then(() => W.scene.remove(cue));
-    await animate(0.35, (k) => {
-      o.position.copy(start.clone().lerp(target, k));
-      if (ballInner) ballInner.rotation.x += dist * 0.4;
-    }, ease.outQuad);
-    sfx('clink'); buzz(30);
-    this.fx.ring(target, { color: '#ffffff', radius: 1.2, dur: 0.3 });
-    this.fx.shake(0.3);
-    await this.arc(o, target.clone().sub(dir.clone().multiplyScalar(0.6)).setY(0.4), 0.5, 0.25);
-    this.goHome(m, 0.45);
-  }
-
-  async use_reine(ev, m) {
-    const o = m.obj, target = this.targetPos(ev.tgt).setY(0.085);
-    m.busy = true;
-    this.callout(m, 'ÉCHEC !');
-    await this.scaleTo(o, 1.15, 0.15);
-    sfx('whoosh');
-    await all(this.arc(o, target, 2.2, 0.45, ease.inOutCubic), this.spin(o, 'y', 1, 0.45));
-    sfx('slam'); buzz(50);
-    this.fx.shake(0.6); this.W.punch(0.6);
-    this.fx.dust(target, 18);
-    this.fx.ring(target, { color: '#ffd166', radius: 1.8, dur: 0.35 });
-    await this.squash(o, 0.9, 0.3, 0.3);
-    m.busy = false;
-  }
-
   async use_briquet(ev, m) {
     const o = m.obj, target = this.targetPos(ev.tgt);
     const over = target.clone().add(V(0.25, 0.7, 0.2));
@@ -521,7 +444,7 @@ export class Animator {
 
   async use_de(ev, m) {
     const o = m.obj, W = this.W;
-    const to = W.cardPos(ev.p).add(V(0.4, 0.3, ev.p === W.me ? -1 : 1));
+    const to = W.cardPos(ev.p).add(V(0.9, 0.3, ev.p === W.me ? -0.6 : 0.6));
     m.busy = true;
     this.callout(m, 'LANCER');
     sfx('dice');
@@ -549,7 +472,7 @@ export class Animator {
 
   async use_photocop(ev, m) {
     const W = this.W, o = m.obj;
-    const spot = V(-1.3, 1.1, W.zs(ev.p) * 1.9);
+    const spot = V(-1.6, 1.1, W.zs(ev.p) * 2.2);
     await this.lift(m, spot, 0.45, 1.6);
     o.rotation.y = 0.35;
     const lid = o.userData.model.userData.lid, light = o.userData.model.userData.light;
@@ -560,7 +483,6 @@ export class Animator {
     const t = ev.tgt;
     if (t.t === 'ent') { const tm = this.m(t.id); if (tm) { ghost = tm.obj.clone(); ghost.position.copy(tm.obj.position); } }
     else if (t.t === 'card' && W.cards[t.p]) { ghost = W.cards[t.p].clone(); }
-    else if (t.t === 'chaos' && W.chaos[t.p]) { ghost = W.chaos[t.p].clone(); }
     if (ghost) {
       ghost.userData = {};
       W.scene.add(ghost);
@@ -651,8 +573,10 @@ export class Animator {
     if (!c) return;
     const d = c.userData.data;
     d.v = ev.to;
-    if (ev.cause === 'copy') { d.r = ev.card.r; d.s = ev.card.s; W.refreshCardFace(ev.p); }
-    if (ev.cause === 'wet') { d.wet = 3; W.refreshCardFace(ev.p); }
+    if (ev.cause === 'copy') { d.r = ev.card.r; d.s = ev.card.s; }
+    if (ev.cause === 'wet') d.wet = 3;
+    W.refreshCardFace(ev.p);
+    this.fx.sparkles(c.position.clone(), ev.to >= ev.from ? '#ffd166' : '#c77dff', 16);
     const delta = ev.to - ev.from;
     const txt = ev.cause === 'cut' ? '÷2' : ev.cause === 'dice' || ev.cause === 'copy' ? '= ' + ev.to : (delta > 0 ? '+' : '') + delta;
     const at = c.position.clone().add(V(0, 0.9, 0));
@@ -681,30 +605,6 @@ export class Animator {
       await all(this.scaleTo(c, 0.01, 0.35, ease.inBack), tween(c.rotation, { x: 0 }, 0.35));
       this.fx.burst(at, { n: 30, color: '#3d3d3d', speed: 1, up: 2, size: 0.25, life: 1.2, gravity: 0.5, additive: false });
       this.fx.pop(at.clone().add(V(0, 0.9, 0)), 'BRÛLÉE !', 'bad big', 1);
-    }
-    W.scene.remove(c);
-  }
-
-  async on_chaosGone(ev) {
-    const W = this.W, c = W.chaos[ev.p];
-    if (!c) return;
-    W.chaos[ev.p] = null;
-    c.userData.idle = false;
-    if (ev.cause === 'fish') {
-      const to = W.chaosPos(ev.to).add(V(1.2, 0.5, 0));
-      sfx('reel');
-      await all(this.arc(c, to, 2, 0.6), this.spin(c, 'y', 2, 0.6), this.scaleTo(c, 0.5, 0.6));
-      this.fx.pop(to.clone().add(V(0, 0.8, 0)), 'VOLÉE !', ev.to === W.me ? 'good' : 'bad', 0.9);
-      await this.scaleTo(c, 0.01, 0.25, ease.inBack);
-    } else if (ev.cause === 'burn') {
-      const at = c.position.clone();
-      sfx('fire');
-      for (let i = 0; i < 6; i++) { this.fx.fire(at.clone().add(V(0, -0.3, 0)), 16, 1); await wait(0.06); }
-      await this.scaleTo(c, 0.01, 0.35, ease.inBack);
-      this.fx.pop(at.clone().add(V(0, 0.9, 0)), 'ANNULÉE', 'bad', 0.9);
-    } else {
-      sfx('ghost');
-      await all(tween(c.position, { y: c.position.y + 1 }, 0.5), this.scaleTo(c, 0.01, 0.5, ease.inQuad));
     }
     W.scene.remove(c);
   }
@@ -959,8 +859,6 @@ export class Animator {
   // ------------------------------------------------------------ résultat du pli
   async on_result(ev) {
     const W = this.W, r = ev.res;
-    for (const c of W.chaos) if (c) W.scene.remove(c);
-    W.chaos = [null, null];
     const cs = W.cards;
     for (const p of [0, 1]) if (cs[p] && r.v[p] != null) this.fx.pop(cs[p].position.clone().add(V(0, 1.2, 0)), String(r.v[p]), 'huge ' + (p === W.me ? 'me' : 'opp'), 1.1);
     await wait(0.45);
@@ -1013,4 +911,236 @@ export class Animator {
   async on_bataille() {}
   async on_void() {}
   async on_over() {}
+
+  // ------------------------------------------------------------ pioche
+  // Révèle une carte piochée. swipe(card, setFlip) : geste du joueur (sinon retournement automatique).
+  async revealDraw(ev, swipe = null) {
+    const W = this.W, p = ev.p, me = p === W.me;
+    W.deckGlow = null;
+    const c = ev.card ? W.makeBattleCard(ev.card, p) : W.makeObjectCard(ev.obj);
+    const deck = W.decks[p];
+    c.position.copy(W.deckPos(p)).setY((deck.userData.count ?? 26) * 0.012 + 0.03);
+    c.quaternion.setFromEuler(new THREE.Euler(0, 0, Math.PI));
+    if (ev.card) deck.userData.set(Math.max(0, (deck.userData.count ?? 26) - 1));
+    sfx('whoosh'); buzz(10);
+    const dist = me ? 6.8 : 8.5, up = me ? 0.3 : 1.8;
+    const to = W.revealPoint(dist, up);
+    const q0 = c.quaternion.clone(), q1 = W.cameraQuat(Math.PI);
+    const from = c.position.clone();
+    await animate(me ? 0.45 : 0.35, (k) => {
+      c.position.lerpVectors(from, to, k); c.position.y += Math.sin(Math.PI * k) * 0.8;
+      c.quaternion.slerpQuaternions(q0, q1, k);
+      c.scale.setScalar(1 + k * (me ? 0.25 : 0.05));
+    }, ease.outCubic);
+    const rays = this.rays(ev);
+    const setFlip = (theta, glow = 0) => {
+      W.faceCamera(c, theta);
+      c.position.copy(to);
+      const j = glow * 0.03;
+      c.position.x += (Math.random() - 0.5) * j; c.position.y += (Math.random() - 0.5) * j;
+      if (rays) { rays.position.copy(to).addScaledVector(W.camera.getWorldDirection(V()), 0.4); rays.quaternion.copy(W.camera.quaternion); rays.material.opacity = Math.min(0.9, glow * 0.9); }
+    };
+    setFlip(Math.PI);
+    if (swipe) await swipe(c, setFlip);
+    else {
+      await wait(0.2);
+      await animate(0.32, (k) => setFlip(Math.PI * (1 - k), k), ease.inOutCubic);
+    }
+    setFlip(0, 1);
+    await this.revealJuice(ev, c, to, rays);
+    await wait(me ? 0.45 : 0.4);
+    if (rays) animate(0.3, (k) => { rays.material.opacity = 0.9 * (1 - k); }).then(() => W.scene.remove(rays));
+    if (ev.card) {
+      W.cards[p] = c;
+      const slot = W.cardPos(p);
+      const qa = c.quaternion.clone(), qb = new THREE.Quaternion().setFromEuler(new THREE.Euler(CARD_TILT, 0, 0));
+      const pa = c.position.clone(), sa = c.scale.x;
+      sfx('whoosh');
+      await animate(0.38, (k) => {
+        c.position.lerpVectors(pa, slot, k); c.position.y += Math.sin(Math.PI * k) * 0.6;
+        c.quaternion.slerpQuaternions(qa, qb, k);
+        c.scale.setScalar(sa + (1 - sa) * k);
+      }, ease.inOutQuad);
+      c.userData.revealed = true;
+      sfx('slam'); buzz(25);
+      this.fx.dust(slot.clone().setY(0.05), 12);
+      this.fx.shake(0.25);
+      await this.squash(c, 1, 0.2, 0.25);
+    } else {
+      const dest = me ? W.revealPoint(4, -3.2) : W.revealPoint(7, 4.5);
+      sfx('whoosh');
+      await all(tween(c.position, { x: dest.x, y: dest.y, z: dest.z }, 0.35, ease.inQuad), this.scaleTo(c, 0.4, 0.35, ease.inQuad));
+      W.scene.remove(c);
+      sfx('tap');
+    }
+  }
+
+  rays(ev) {
+    const big = !ev.card || ev.card.r >= 11 || ev.card.gold;
+    if (!big) return null;
+    if (!this.raysTex) {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+      const g = cv.getContext('2d');
+      g.translate(128, 128);
+      for (let i = 0; i < 16; i++) {
+        g.rotate(Math.PI / 8);
+        const gr = g.createLinearGradient(0, 0, 0, -128);
+        gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr; g.beginPath(); g.moveTo(-6, 0); g.lineTo(-18, -128); g.lineTo(18, -128); g.lineTo(6, 0); g.fill();
+      }
+      this.raysTex = new THREE.CanvasTexture(cv);
+    }
+    const color = !ev.card ? KINDS[ev.obj].color : ev.card.r === 14 ? '#ff4fd8' : '#ffd166';
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), new THREE.MeshBasicMaterial({ map: this.raysTex, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+    m.renderOrder = -1;
+    this.W.scene.add(m);
+    const spin = () => { if (m.parent) { m.rotateZ(0.02); requestAnimationFrame(spin); } };
+    spin();
+    return m;
+  }
+
+  async revealJuice(ev, c, at, rays) {
+    const me = ev.p === this.W.me;
+    const r = ev.card?.r ?? 0;
+    if (!ev.card) {
+      const col = KINDS[ev.obj].color;
+      sfx('sparkle'); sfx('spawn'); buzz(me ? 60 : 20);
+      freezeFrame(0.06);
+      this.fx.burst(at, { n: 70, colors: [col, '#ffffff', '#fff3b0'], speed: 5, up: 3, size: 0.25, life: 0.8, gravity: -3 });
+      this.fx.flash(col, 0.35, 0.3);
+      this.fx.pop(at.clone().add(V(0, -1.3, 0)), KINDS[ev.obj].name.toUpperCase(), 'gold big', 1);
+      this.ui.discover?.(ev.obj, at);
+    } else if (r === 14 || ev.card.gold) {
+      sfx('victory'); buzz(me ? 120 : 30);
+      freezeFrame(0.1);
+      this.fx.burst(at, { n: 120, colors: ['#ff4fd8', '#ffd166', '#4cc9f0', '#7ae582', '#ffffff'], speed: 7, up: 4, size: 0.3, life: 1, gravity: -4 });
+      this.fx.flash('#ffffff', 0.6, 0.35);
+      this.fx.shake(0.7); this.W.punch(0.8);
+      this.fx.pop(at.clone().add(V(0, -1.3, 0)), r === 14 ? 'AS !' : 'CARTE EN OR', 'gold huge', 1.1);
+    } else if (r >= 11) {
+      sfx('win'); buzz(me ? 60 : 20);
+      this.fx.burst(at, { n: 60, colors: ['#ffd166', '#ffffff'], speed: 5, up: 3, size: 0.25, life: 0.8, gravity: -4 });
+      this.fx.flash('#ffd166', 0.3, 0.25);
+      this.fx.shake(0.35);
+    } else {
+      sfx(r >= 8 ? 'coin' : 'flip'); buzz(me ? 25 : 10);
+      this.fx.burst(at, { n: r >= 8 ? 30 : 14, color: '#ffffff', speed: 3, up: 2, size: 0.18, life: 0.5, gravity: -4 });
+    }
+    await this.squash(c, c.scale.x, 0.18, 0.25);
+  }
+
+  async on_draw(ev) { await this.revealDraw(ev, null); }
+
+  // ------------------------------------------------------------ main
+  async on_toHand(ev) { this.ui.handAdd?.(ev.p, ev.card, ev.from); if (ev.from !== 'draw') await wait(0.35); }
+  async on_discard(ev) { this.ui.handRemove?.(ev.p, ev.hid, 'discard'); sfx('fire'); await wait(0.3); }
+  async on_steal(ev) {
+    this.ui.handRemove?.(ev.from, ev.hid, 'steal');
+    sfx(ev.cause === 'magnet' ? 'magnet' : 'reel');
+    const W = this.W;
+    const c = W.makeObjectCard(ev.kind);
+    const a = ev.from === W.me ? W.revealPoint(4.5, -2.6) : W.revealPoint(7, 3.8);
+    const b = ev.to === W.me ? W.revealPoint(4.5, -2.6) : W.revealPoint(7, 3.8);
+    c.position.copy(a); W.faceCamera(c, 0); c.scale.setScalar(0.6);
+    const mid = W.revealPoint(5, 0);
+    await all(tween(c.position, { x: mid.x, y: mid.y, z: mid.z }, 0.35, ease.outCubic), this.scaleTo(c, 1, 0.35));
+    this.fx.pop(mid.clone().add(V(0, -1.2, 0)), 'VOLÉE !', ev.to === W.me ? 'good big' : 'bad big', 0.9);
+    await wait(0.4);
+    await all(tween(c.position, { x: b.x, y: b.y, z: b.z }, 0.3, ease.inQuad), this.scaleTo(c, 0.4, 0.3));
+    W.scene.remove(c);
+  }
+
+  // Carte jouée : elle s'affiche en grand (surtout celles du bot), puis se transforme.
+  async on_play(ev) {
+    const W = this.W, me = ev.p === W.me;
+    this.ui.handRemove?.(ev.p, ev.hid, 'play');
+    if (me && this.skipUse) { this.lastBurst = this.skipFrom || null; return; }
+    const c = W.makeObjectCard(ev.kind);
+    const start = me ? W.revealPoint(4.5, -2.6) : W.revealPoint(7, 3.8);
+    const show = W.revealPoint(me ? 5.5 : 5, me ? 0.4 : 0.6);
+    c.position.copy(start); W.faceCamera(c, me ? 0 : Math.PI); c.scale.setScalar(0.5);
+    sfx('whoosh');
+    const q0 = c.quaternion.clone(), q1 = W.cameraQuat(0);
+    await animate(0.35, (k) => { c.position.lerpVectors(start, show, k); c.quaternion.slerpQuaternions(q0, q1, k); c.scale.setScalar(0.5 + 0.6 * k); }, ease.outCubic);
+    sfx('flip');
+    if (!me) this.fx.pop(show.clone().add(V(0, -1.3, 0)), KINDS[ev.kind].name.toUpperCase(), 'opp big', 0.9);
+    await wait(me ? 0.25 : 0.75);
+    const land = W.launchPos(ev.p);
+    await all(tween(c.position, { x: land.x, y: land.y, z: land.z }, 0.3, ease.inQuad), this.scaleTo(c, 0.3, 0.3, ease.inQuad));
+    W.scene.remove(c);
+    this.fx.burst(land, { n: 40, colors: [KINDS[ev.kind].color, '#ffffff'], speed: 3, up: 2, size: 0.25, life: 0.6, gravity: -2 });
+    this.fx.ring(land.clone().setY(0.05), { color: KINDS[ev.kind].color, radius: 1.5, dur: 0.35 });
+    sfx('sparkle');
+    this.lastBurst = land;
+  }
+
+  // ------------------------------------------------------------ billard : rejoue la simulation physique
+  async on_billiard(ev) {
+    const W = this.W, me = ev.p === W.me;
+    const ball = new THREE.Group();
+    const bm = makeModel('billard'); bm.children.slice(1).forEach((c) => c.visible = false);
+    bm.position.y = -0.04;
+    ball.add(bm);
+    const toWorld = (x, y) => W.cellPos(x, y);
+    ball.position.copy(toWorld(ev.start.x, ev.start.y));
+    W.scene.add(ball);
+    if (!me || !this.skipUse) {
+      ball.scale.setScalar(0.01);
+      await this.scaleTo(ball, 1, 0.3);
+      const cue = cueModel();
+      const dir = toWorld(ev.start.x + Math.cos(ev.angle), ev.start.y + Math.sin(ev.angle)).sub(ball.position).normalize();
+      cue.quaternion.setFromUnitVectors(V(0, 1, 0), dir);
+      cue.scale.setScalar(0.6);
+      W.scene.add(cue);
+      const tip = (d) => ball.position.clone().setY(0.3).sub(dir.clone().multiplyScalar(1.34 + d));
+      await animate(0.4, (k) => cue.position.copy(tip(0.3 + k * 0.6)), ease.outQuad);
+      await animate(0.07, (k) => cue.position.copy(tip(0.9 - k * 0.9)), ease.inQuad);
+      W.scene.remove(cue);
+    }
+    sfx('clink'); buzz(40);
+    this.fx.burst(ball.position.clone().setY(0.3), { n: 14, color: '#ffffff', speed: 2, up: 1, size: 0.15, life: 0.3 });
+    const fallenAt = new Map(ev.fallen.map((f) => [f.id, f]));
+    const objs = new Map();
+    for (const m of W.models.values()) if (m.zone === 'board') { objs.set(m.id, m); m.busy = true; }
+    let last = {};
+    const frames = ev.frames;
+    const dur = frames.length ? frames[frames.length - 1].t : 0.1;
+    let fi = 0;
+    const dropped = new Set();
+    await animate(dur, (k) => {
+      const t = k * dur;
+      while (fi < frames.length - 1 && frames[fi + 1].t <= t) fi++;
+      const f = frames[fi];
+      for (const [id, pos] of Object.entries(f)) {
+        if (id === 't') continue;
+        const wp = toWorld(pos[0], pos[1]);
+        if (id === 'ball') { const prev = last.ball; ball.position.set(wp.x, wp.y, wp.z); if (prev) bm.rotation.x += Math.hypot(wp.x - prev.x, wp.z - prev.z) * 3; last.ball = wp.clone(); continue; }
+        const m = objs.get(+id);
+        if (m && !dropped.has(m.id)) { if (last[id] && last[id].distanceTo(wp) > 0.02) m.obj.rotation.z = (Math.random() - 0.5) * 0.2; m.obj.position.set(wp.x, wp.y, wp.z); last[id] = wp.clone(); }
+      }
+      for (const [id, fall] of fallenAt) {
+        if (t < fall.t || dropped.has(id === 'ball' ? 'ball' : +id)) continue;
+        const o = id === 'ball' ? ball : objs.get(+id)?.obj;
+        if (!o) continue;
+        dropped.add(id === 'ball' ? 'ball' : +id);
+        const v = toWorld(fall.x + fall.vx * 0.3, fall.y + fall.vy * 0.3).sub(toWorld(fall.x, fall.y));
+        const end = o.position.clone().add(v.multiplyScalar(2)).setY(-4);
+        sfx('slip');
+        if (id !== 'ball') { this.fx.pop(o.position.clone().setY(1), 'TOMBÉ !', 'bad', 0.9); buzz(40); }
+        this.arc(o, end, 0.5, 0.6, ease.inQuad);
+        this.spin(o, 'x', 2, 0.6);
+      }
+    }, ease.linear);
+    for (const [id, m] of objs) {
+      m.obj.rotation.z = 0;
+      if (dropped.has(id)) { m.fellOff = true; continue; }
+      const sn = ev.snaps[id];
+      if (sn) { m.x = sn.x; m.y = sn.y; tween(m.obj.position, (({ x, y, z }) => ({ x, y, z }))(W.cellPos(sn.x, sn.y)), 0.25, ease.outQuad); }
+      m.busy = false;
+    }
+    if (!dropped.has('ball')) await all(this.scaleTo(ball, 0.01, 0.3, ease.inBack));
+    else await wait(0.4);
+    W.scene.remove(ball);
+  }
 }
+

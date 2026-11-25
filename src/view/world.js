@@ -3,12 +3,11 @@ import * as THREE from 'three';
 import { FX } from './fx.js';
 import { tween, ease, updateTweens, clock } from './tween.js';
 import { makeModel, ownerRing, avatarModel, OWNER, mat } from './models.js';
-import { makeCard, battleFace, battleBack, chaosFace, chaosBack, deckModel, CH, setCardFace } from './cards.js';
+import { makeCard, battleFace, objectFace, deckModel, CH } from './cards.js';
 import { KINDS, KIND_IDS } from '../engine/kinds.js';
-import { cardValue } from '../engine/engine.js';
 
 export const CELL = 0.9;
-const CARD_TILT = 0.62;
+export const CARD_TILT = 0.62;
 const TABLE_W = 3.35, TABLE_D = 6.7;
 
 export class World {
@@ -35,8 +34,9 @@ export class World {
     this.fx = new FX(this.scene, this.camera, overlay);
     this.models = new Map();
     this.cards = [null, null];
-    this.chaos = [null, null];
     this.markers = [];
+    this.cellMarks = [];
+    this.pov = null; this.povK = 0;
     this.badges = new Map();
     this.ghost = [false, false];
     this.mal = [0, 0];
@@ -47,7 +47,7 @@ export class World {
     this.buildLights();
     this.buildTable();
     this.decks = [deckModel(26), deckModel(26)];
-    this.decks.forEach((d) => this.scene.add(d));
+    this.decks.forEach((d, p) => { d.userData.pick = { t: 'deck', p }; this.scene.add(d); });
     this.avatars = [avatarModel(0), avatarModel(1)];
     this.avatars.forEach((a, p) => { a.userData.pick = { t: 'player', p }; this.scene.add(a); this.addHit(a, 0.45, 1.5); });
     this.potGroup = new THREE.Group(); this.scene.add(this.potGroup);
@@ -106,6 +106,7 @@ export class World {
     for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) {
       const t = new THREE.Mesh(new THREE.BoxGeometry(CELL - 0.02, 0.05, CELL - 0.02), (x + y) % 2 ? dark : light);
       t.position.set((x - 2) * CELL, 0.06, (y - 2) * CELL); t.receiveShadow = true;
+      t.userData.cell = { x, y };
       this.board.add(t);
     }
     this.board.scale.setScalar(0.0001);
@@ -138,21 +139,20 @@ export class World {
   // ------------------------------------------------------------ positions
   zs(p) { return p === this.me ? 1 : -1; }
   cellPos(x, y) { const s = this.me === 0 ? 1 : -1; return new THREE.Vector3((x - 2) * CELL, 0.085, (y - 2) * CELL * s); }
-  cardPos(p) { const z = this.zs(p) * 3.3; return new THREE.Vector3(-0.55, Math.sin(CARD_TILT) * CH / 2 + 0.05, z); }
-  chaosPos(p) { const z = this.zs(p) * 3.3; return new THREE.Vector3(0.95, Math.sin(CARD_TILT) * CH / 2 + 0.05, z); }
+  cardPos(p) { const z = this.zs(p) * 3.3; return new THREE.Vector3(0.05, Math.sin(CARD_TILT) * CH / 2 + 0.05, z); }
+  launchPos(p) { return new THREE.Vector3(0, 0.8, this.zs(p) * 4.6); }
   deckPos(p) { return new THREE.Vector3(-2.35, 0, this.zs(p) * 3.3); }
   avatarPos(p) { return new THREE.Vector3(2.55, 0, this.zs(p) * 3.25); }
   potPos() { return new THREE.Vector3(2.85, 0, 0); }
   cardRot(p) { return new THREE.Euler(CARD_TILT, 0, 0); }
 
   slotPos(p, i, n) {
-    const cols = Math.max(6, n);
-    const span = 6.2;
+    const cols = Math.max(5, n);
+    const span = 5.6;
     const x = -span / 2 + (span / cols) * (i + 0.5);
-    const z = this.zs(p) * 5.0;
-    return new THREE.Vector3(x, 0, z);
+    return new THREE.Vector3(x, 0, this.zs(p) * 4.65);
   }
-  sideScale(n) { return n > 6 ? 0.9 : 1.12; }
+  sideScale(n) { return n > 5 ? 0.85 : 1.0; }
 
   entTarget(m) {
     if (m.zone === 'board') return { pos: this.cellPos(m.x, m.y), scale: 1.05 };
@@ -160,7 +160,7 @@ export class World {
     const i = list.indexOf(m);
     return { pos: this.slotPos(m.owner, i, list.length), scale: this.sideScale(list.length) };
   }
-  sideList(p) { return [...this.models.values()].filter((m) => m.zone === 'side' && m.owner === p).sort((a, b) => a.id - b.id); }
+  sideList(p) { return [...this.models.values()].filter((m) => m.zone === 'front' && m.owner === p).sort((a, b) => a.id - b.id); }
 
   place() {
     for (const p of [0, 1]) {
@@ -181,15 +181,15 @@ export class World {
   fitCamera() {
     const dir = new THREE.Vector3(0, 1, 0.78).normalize();
     const pts = [];
-    for (const x of [-3.05, 3.05]) for (const z of [-6.1, 6.2]) pts.push(new THREE.Vector3(x, 0.3, z));
-    pts.push(new THREE.Vector3(2.55, 1.6, -3.25), new THREE.Vector3(-3.05, 0.9, -5.6), new THREE.Vector3(3.05, 0.9, -5.6));
+    for (const x of [-3.05, 3.05]) for (const z of [-5.3, 5.3]) pts.push(new THREE.Vector3(x, 0.3, z));
+    pts.push(new THREE.Vector3(2.55, 1.6, -3.25));
     const cam = this.camera;
     let lo = 6, hi = 60;
     for (let i = 0; i < 30; i++) {
       const d = (lo + hi) / 2;
       cam.position.copy(this.camTarget).addScaledVector(dir, d);
       cam.lookAt(this.camTarget); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
-      const ok = pts.every((p) => { const v = p.clone().project(cam); return Math.abs(v.x) < 0.99 && v.y < 0.78 && v.y > -0.74; });
+      const ok = pts.every((p) => { const v = p.clone().project(cam); return Math.abs(v.x) < 0.99 && v.y < 0.7 && v.y > -0.6; });
       if (ok) hi = d; else lo = d;
     }
     this.camBase.copy(this.camTarget).addScaledVector(dir, hi);
@@ -213,7 +213,7 @@ export class World {
     const t = this.entTarget(m);
     m.obj.position.copy(at || t.pos);
     m.obj.scale.setScalar(scale);
-    if (m.zone === 'side' && m.owner !== this.me) m.obj.rotation.y = Math.PI;
+    if (m.zone === 'front' && m.owner !== this.me) m.obj.rotation.y = Math.PI;
     this.scene.add(m.obj);
     return m;
   }
@@ -236,7 +236,7 @@ export class World {
     for (const m of this.models.values()) {
       if (m === skip || m.busy) continue;
       const t = this.entTarget(m);
-      const ry = m.zone === 'side' && m.owner !== this.me ? Math.PI : 0;
+      const ry = m.zone === 'front' && m.owner !== this.me ? Math.PI : 0;
       if (m.obj.position.distanceTo(t.pos) > 0.01 || Math.abs(m.obj.scale.x - t.scale) > 0.01) {
         ps.push(tween(m.obj.position, { x: t.pos.x, y: t.pos.y, z: t.pos.z }, dur, ease.outBack));
         ps.push(tween(m.obj.scale, { x: t.scale, y: t.scale, z: t.scale }, dur, ease.outBack));
@@ -254,31 +254,45 @@ export class World {
 
   // ------------------------------------------------------------ cartes
   makeBattleCard(card, p) {
-    const c = makeCard(battleFace(card), battleBack());
+    const c = makeCard(battleFace(card));
     c.userData.pick = { t: 'card', p };
     c.userData.data = { ...card };
     this.scene.add(c);
     return c;
   }
-  makeChaosCard(kind, p) {
-    const c = makeCard(chaosFace(kind, this.icons), chaosBack());
-    c.userData.pick = { t: 'chaos', p };
+  makeObjectCard(kind) {
+    const c = makeCard(objectFace(kind, this.icons));
     c.userData.kind = kind;
     this.scene.add(c);
     return c;
   }
+  makeBackCard() { const c = makeCard(battleFace({ r: 2, v: 2, s: 'pique' })); this.scene.add(c); return c; }
   refreshCardFace(p) {
     const c = this.cards[p];
     if (!c) return;
-    setCardFace(c, battleFace(c.userData.data, { wet: c.userData.data.wet > 0 }));
+    const d = c.userData.data;
+    const t = battleFace(d);
+    c.userData.front.material.map = t; c.userData.front.material.emissiveMap = t;
+    c.userData.front.material.needsUpdate = true;
   }
-  viewValue(p) {
-    const c = this.cards[p];
-    if (!c) return null;
-    let v = c.userData.data.v;
-    for (const m of this.models.values()) if (m.kind === 'roi' && m.zone === 'board' && m.owner === p) v++;
-    if (this.mal[p] > 0) v--;
-    return Math.max(1, v);
+  // Point devant la caméra, pour montrer une carte en grand.
+  revealPoint(dist = 5.5, up = 0) {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    return this.camera.position.clone().addScaledVector(dir, dist).addScaledVector(camUp, up);
+  }
+  // Oriente une carte (face vers +y en local) pour qu'elle regarde la caméra.
+  faceCamera(card, flip = 0) {
+    const q = this.camera.quaternion.clone();
+    const fix = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+    const spin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), flip);
+    card.quaternion.copy(q).multiply(spin).multiply(fix);
+  }
+  cameraQuat(flip = 0) {
+    const o = new THREE.Object3D();
+    this.faceCamera(o, flip);
+    return o.quaternion.clone();
   }
 
   // ------------------------------------------------------------ réconciliation finale
@@ -304,7 +318,7 @@ export class World {
   objectForTarget(t) {
     if (t.t === 'ent') return this.models.get(t.id)?.obj;
     if (t.t === 'card') return this.cards[t.p];
-    if (t.t === 'chaos') return this.chaos[t.p];
+    if (t.t === 'deck') return this.decks[t.p];
     if (t.t === 'player') return this.avatars[t.p];
     if (t.t === 'grave' || t.t === 'self') return this.grave;
     return null;
@@ -340,15 +354,46 @@ export class World {
     const r = this.renderer.domElement.getBoundingClientRect();
     const v = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
     this.raycaster.setFromCamera(v, this.camera);
-    const roots = [...[...this.models.values()].map((m) => m.obj), ...this.cards.filter(Boolean), ...this.chaos.filter(Boolean), ...this.avatars, this.grave];
+    const roots = [...[...this.models.values()].map((m) => m.obj), ...this.cards.filter(Boolean), ...this.avatars, this.grave, ...this.decks];
     const hits = this.raycaster.intersectObjects(roots, true);
     for (const h of hits) {
       let o = h.object;
       while (o && !o.userData.pick) o = o.parent;
       if (o) return o.userData.pick;
     }
-    return null;
+    return this.boardShown ? this.pickCell(cx, cy) : null;
   }
+  pickCell(cx, cy) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const v = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(v, this.camera);
+    const hit = this.raycaster.intersectObjects(this.board.children, false).find((h) => h.object.userData.cell);
+    if (!hit) return null;
+    const c = hit.object.userData.cell;
+    return { t: 'cell', x: c.x, y: this.me === 0 ? c.y : 4 - c.y };
+  }
+  // Point du plateau (y = 0) sous le doigt.
+  tablePoint(cx, cy) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const v = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(v, this.camera);
+    const p = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p) ? p : null;
+  }
+  // Cases lumineuses (déplacements d'échecs, pose de bombe, boule de billard).
+  markCells(cells, color = '#ffe14d') {
+    this.clearCells();
+    for (const c of cells) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(CELL * 0.86, CELL * 0.86), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.copy(this.cellPos(c.x, c.y)).setY(0.1);
+      m.userData.capture = !!c.cap;
+      if (c.cap) m.material.color.set('#ff3d71');
+      this.scene.add(m);
+      this.cellMarks.push(m);
+    }
+  }
+  clearCells() { for (const m of this.cellMarks) this.scene.remove(m); this.cellMarks = []; }
 
   // ------------------------------------------------------------ badges HTML
   badge(key, anchor, text, cls) {
@@ -364,16 +409,6 @@ export class World {
     for (const m of this.models.values()) {
       if (m.kind !== 'bombe' || m.obj.scale.x < 0.3) continue;
       this.badge('e' + m.id + 't', m.obj.position.clone().add(new THREE.Vector3(0, 1.05 * m.obj.scale.x, 0)), String(m.timer), 'timer bomb');
-    }
-    for (const p of [0, 1]) {
-      const c = this.cards[p];
-      if (c && c.userData.revealed) {
-        const v = this.viewValue(p);
-        const d = c.userData.data;
-        const pos = c.position.clone().add(new THREE.Vector3(0.62, 0.55, -0.35));
-        const mod = v !== d.r;
-        this.badge('v' + p, pos, String(v), 'val ' + (mod ? (v > d.r ? 'up' : 'down') : '') + (p === this.me ? ' me' : ' opp'));
-      }
     }
     const W = this.overlay.clientWidth, H = this.overlay.clientHeight;
     for (const [k, b] of this.badges) {
@@ -433,7 +468,7 @@ export class World {
       const o = g.userData.obj;
       const p = o.getWorldPosition(new THREE.Vector3());
       const t = g.userData.target;
-      const h = t.t === 'player' ? 2.1 : t.t === 'card' || t.t === 'chaos' ? 1.75 : 1.2 * (o.scale?.x || 1);
+      const h = t.t === 'player' ? 2.1 : t.t === 'card' ? 1.75 : t.t === 'deck' ? 1.0 : 1.2 * (o.scale?.x || 1);
       g.userData.arrow.position.set(p.x, h + Math.sin(this.time * 6) * 0.1, p.z);
       g.userData.ring.position.set(p.x, 0.1, p.z);
       const s = 1 + Math.sin(this.time * 6) * 0.08;
@@ -448,18 +483,18 @@ export class World {
       if (u.disk) { u.disk.rotation.z += dt * 1.6; u.halo.scale.setScalar(1 + Math.sin(this.time * 4) * 0.06); }
       if (u.spark) { const s = 0.7 + Math.random() * 0.6; u.spark.scale.setScalar(s); if (Math.random() < 0.3) this.fx.add.emit(u.spark.getWorldPosition(new THREE.Vector3()), new THREE.Vector3((Math.random() - 0.5), 1.5, (Math.random() - 0.5)), { color: '#ffba08', size: 0.08, life: 0.35, gravity: -2 }); }
       if (m.kind === 'chat' && !m.busy) m.obj.userData.model.rotation.y = Math.sin(this.time * 0.7 + m.id) * 0.6;
-      const tired = m.cd > 0;
-      if (m.obj.userData.tired !== tired) {
-        m.obj.userData.tired = tired;
-        m.obj.userData.model.traverse((o) => { if (o.material && o.material.color) { if (!o.userData.own) { o.material = o.material.clone(); o.userData.own = true; } o.material.color.multiplyScalar(tired ? 0.45 : 1 / 0.45); } });
-      }
     }
     for (const p of [0, 1]) {
       const a = this.avatars[p].userData.inner;
       if (!this.ghost[p] && !this.avatars[p].userData.busy) a.position.y = Math.abs(Math.sin(this.time * 2.2 + p)) * 0.05;
       if (this.ghost[p]) a.position.y = 0.4 + Math.sin(this.time * 3) * 0.12;
     }
-    for (const c of [...this.chaos]) if (c && c.userData.idle) c.position.y = c.userData.baseY + Math.sin(this.time * 3) * 0.04;
+    for (const m of this.cellMarks) m.material.opacity = 0.35 + Math.sin(this.time * 6) * 0.2;
+    for (const p of [0, 1]) {
+      const gl = this.decks[p].userData.glow;
+      const target = this.deckGlow === p ? 0.55 + Math.sin(this.time * 5) * 0.3 : 0;
+      gl.material.opacity += (target - gl.material.opacity) * Math.min(1, dt * 10);
+    }
     if (this.globalObjs.orage) {
       this.globalObjs.orage.rotation.y += dt * 0.1;
       for (let i = 0; i < 6; i++) this.fx.norm.emit(new THREE.Vector3((Math.random() - 0.5) * 7, 6, (Math.random() - 0.5) * 12), new THREE.Vector3(0, -14, 0), { color: '#90e0ef', size: 0.07, life: 0.45, gravity: -10, drag: 0 });
@@ -468,21 +503,38 @@ export class World {
     this.camPunch *= Math.pow(0.02, dtReal);
     const cam = this.camera;
     const sway = new THREE.Vector3(Math.sin(this.time * 0.35) * 0.08, Math.sin(this.time * 0.5) * 0.05, 0);
-    cam.position.copy(this.camBase).add(sway).add(this.fx.shakeOffset);
-    const toward = this.camTarget.clone().sub(cam.position).multiplyScalar(this.camPunch * 0.08);
+    const k = this.povK;
+    const basePos = this.camBase.clone().add(sway);
+    const look = this.camTarget.clone();
+    if (this.pov && k > 0) { basePos.lerp(this.pov.pos, k); look.lerp(this.pov.target, k); }
+    cam.position.copy(basePos).add(this.fx.shakeOffset);
+    const toward = look.clone().sub(cam.position).multiplyScalar(this.camPunch * 0.08);
     cam.position.add(toward);
     cam.up.set(Math.sin(this.camRoll), Math.cos(this.camRoll), 0);
-    cam.lookAt(this.camTarget);
+    const wantFov = this.pov && k > 0 ? 38 + ((this.pov.fov ?? 38) - 38) * k : 38;
+    if (Math.abs(cam.fov - wantFov) > 0.01) { cam.fov = wantFov; cam.updateProjectionMatrix(); }
+    cam.lookAt(look);
     this.updateBadges();
     this.renderer.render(this.scene, cam);
     void clock;
   }
   punch(a = 1) { this.camPunch = Math.max(this.camPunch, a); }
 
+  // Vue subjective : la caméra glisse vers pos et regarde target.
+  setPov(pos, target, fov = 55, dur = 0.6) {
+    if (!this.pov) this.pov = { pos: pos.clone(), target: target.clone(), fov };
+    else { this.pov.pos.copy(pos); this.pov.target.copy(target); this.pov.fov = fov; }
+    return tween(this, { povK: 1 }, dur, ease.inOutCubic);
+  }
+  clearPov(dur = 0.6) { return tween(this, { povK: 0 }, dur, ease.inOutCubic).then(() => { if (this.povK === 0) this.pov = null; }); }
+
   clearAll() {
     for (const id of [...this.models.keys()]) this.removeEnt(id);
-    for (const c of [...this.cards, ...this.chaos]) if (c) this.scene.remove(c);
-    this.cards = [null, null]; this.chaos = [null, null];
+    for (const c of this.cards) if (c) this.scene.remove(c);
+    this.cards = [null, null];
+    this.clearCells();
+    this.deckGlow = null;
+    this.pov = null; this.povK = 0;
     for (const c of [...this.potGroup.children]) this.potGroup.remove(c);
     if (this.globalObjs.orage) { this.scene.remove(this.globalObjs.orage); this.globalObjs.orage = null; }
     this.hemi.intensity = 0.9; this.sun.intensity = 2.4;

@@ -14,31 +14,55 @@
     <!-- HUD de partie -->
     <div id="hud" hidden>
       <header class="bar top opp">
-        <div class="who"><span class="dot"></span><span class="nm" id="oppName">Le Bot</span><span class="deckc" id="oppDeck">26</span></div>
-        <div class="score"><span class="pts" id="oppPts">0</span><span class="of" id="oppOf">/20</span><div class="meter"><i id="oppMeter"></i></div></div>
+        <div class="who"><span class="nm" id="oppName">Le Bot</span></div>
+        <div class="chip-score"><b id="oppPts">0</b></div>
         <div class="side"><button class="icon-btn" id="btnPause" aria-label="Pause"><i class="ico-pause"></i></button></div>
       </header>
-      <div id="infoRow">
-        <span class="chip round" id="roundChip">TOUR 1</span>
-        <span class="chip streakc" id="streak" hidden></span>
-        <span id="globals"></span>
-      </div>
-
+      <div id="oppHand" class="opp-hand"></div>
+      <div id="infoRow"><span class="chip streakc" id="streak" hidden></span><span id="globals"></span></div>
       <div id="prompt" class="prompt"></div>
-      <div id="ticker" class="ticker"></div>
 
-
-      <div id="pickPanel" class="panel" hidden>
-        <div class="ph"><img id="pickIcon" alt=""><div><b id="pickName"></b><small id="pickDesc"></small></div></div>
-        <div class="chips" id="pickChips"></div>
-        <button class="btn ghost small" id="btnBack">RETOUR</button>
-      </div>
+      <div id="hand" class="hand"></div>
 
       <footer class="bar bottom me">
-        <div class="who"><span class="dot"></span><span class="nm" id="meName">Toi</span><span class="deckc" id="meDeck">26</span></div>
-        <div class="score"><span class="pts" id="mePts">0</span><span class="of" id="meOf">/20</span><div class="meter"><i id="meMeter"></i></div></div>
-        <div class="side"><button class="btn pass" id="btnPass" hidden>PASSER</button></div>
+        <div class="who"><span class="nm" id="meName">Toi</span></div>
+        <div class="chip-score"><b id="mePts">0</b></div>
+        <div class="side"><button class="btn pass" id="btnPass" hidden>PASSER</button><button class="btn pass ghost" id="btnCancel" hidden>ANNULER</button></div>
       </footer>
+    </div>
+
+    <!-- Fiche d'une carte -->
+    <section id="note" class="note" hidden>
+      <div class="note-card">
+        <div class="note-top">
+          <img id="noteImg" alt="">
+          <div class="note-video" id="noteVideo"></div>
+        </div>
+        <h2 id="noteName"></h2>
+        <p id="noteShort"></p>
+        <div class="note-btns">
+          <button class="btn big" id="btnPlay2">JOUER</button>
+          <button class="btn ghost" id="btnNoteClose">FERMER</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Choix dans le cimetière -->
+    <section id="pickList" class="note" hidden>
+      <div class="note-card">
+        <h2>CREUSE QUELLE CARTE ?</h2>
+        <div class="pick-row" id="pickRow"></div>
+        <button class="btn ghost" id="btnPickClose">ANNULER</button>
+      </div>
+    </section>
+
+    <!-- Couche des gestes (mini-jeux) -->
+    <div id="mg" class="mg" hidden>
+      <div id="mgHint" class="mg-hint"></div>
+      <div id="mgGauge" class="mg-gauge" hidden><i></i></div>
+      <div id="mgReel" class="mg-reel" hidden><i></i></div>
+      <div id="mgCross" class="mg-cross" hidden></div>
+      <button id="mgBtn" class="btn big mg-btn" hidden>OK</button>
     </div>
 
     <!-- Menu principal -->
@@ -62,10 +86,9 @@
         <button class="toggle" id="btnSound">SON : OUI</button>
       </div>
       <div class="stats" id="stats"></div>
-      <div class="ver">v0.1.0</div>
+      <div class="ver">v0.2.0</div>
     </section>
 
-    <!-- Fin de partie -->
     <section id="end" class="screen" hidden>
       <h1 id="endTitle">VICTOIRE</h1>
       <p id="endScore" class="endscore"></p>
@@ -76,7 +99,6 @@
       </div>
     </section>
 
-    <!-- Pause -->
     <section id="pause" class="screen dim" hidden>
       <h2>PAUSE</h2>
       <div class="menu-btns">
@@ -88,7 +110,6 @@
       </div>
     </section>
 
-    <!-- Feuille d'info / codex / règles -->
     <section id="sheet" class="sheet" hidden>
       <div class="sheet-inner">
         <button class="icon-btn close" id="btnSheetClose" aria-label="Fermer"><i class="ico-x"></i></button>
