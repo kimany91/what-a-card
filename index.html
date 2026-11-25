@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0a14">
+  <title>What a Card</title>
+</head>
+<body>
+  <div id="app">
+    <div id="stage"></div>
+    <div id="overlay"></div>
+
+    <!-- HUD de partie -->
+    <div id="hud" hidden>
+      <header class="bar top opp">
+        <div class="who"><span class="dot"></span><span class="nm" id="oppName">Le Bot</span><span class="deckc" id="oppDeck">26</span></div>
+        <div class="score"><span class="pts" id="oppPts">0</span><span class="of" id="oppOf">/20</span><div class="meter"><i id="oppMeter"></i></div></div>
+        <div class="side"><button class="icon-btn" id="btnPause" aria-label="Pause"><i class="ico-pause"></i></button></div>
+      </header>
+      <div id="infoRow">
+        <span class="chip round" id="roundChip">TOUR 1</span>
+        <span class="chip streakc" id="streak" hidden></span>
+        <span id="globals"></span>
+      </div>
+
+      <div id="prompt" class="prompt"></div>
+      <div id="ticker" class="ticker"></div>
+
+
+      <div id="pickPanel" class="panel" hidden>
+        <div class="ph"><img id="pickIcon" alt=""><div><b id="pickName"></b><small id="pickDesc"></small></div></div>
+        <div class="chips" id="pickChips"></div>
+        <button class="btn ghost small" id="btnBack">RETOUR</button>
+      </div>
+
+      <footer class="bar bottom me">
+        <div class="who"><span class="dot"></span><span class="nm" id="meName">Toi</span><span class="deckc" id="meDeck">26</span></div>
+        <div class="score"><span class="pts" id="mePts">0</span><span class="of" id="meOf">/20</span><div class="meter"><i id="meMeter"></i></div></div>
+        <div class="side"><button class="btn pass" id="btnPass" hidden>PASSER</button></div>
+      </footer>
+    </div>
+
+    <!-- Menu principal -->
+    <section id="menu" class="screen">
+      <div class="logo"><span class="l1">WHAT</span><span class="l2">A</span><span class="l3">CARD</span></div>
+      <p class="tag">La bataille qui part en vrille</p>
+      <div class="menu-btns">
+        <button class="btn big" id="btnPlay">JOUER CONTRE LE BOT</button>
+        <button class="btn" id="btnOnline" disabled>EN LIGNE <small>bientôt</small></button>
+        <div class="row2">
+          <button class="btn ghost" id="btnCodex">CARTES <small id="codexCount">0/27</small></button>
+          <button class="btn ghost" id="btnRules">RÈGLES</button>
+        </div>
+      </div>
+      <div class="settings">
+        <label>Ton nom <input id="inName" maxlength="14" autocomplete="off"></label>
+        <div class="seg" id="segTarget" role="group" aria-label="Points pour gagner">
+          <span>Points pour gagner</span>
+          <button data-v="15">15</button><button data-v="20">20</button><button data-v="30">30</button>
+        </div>
+        <button class="toggle" id="btnSound">SON : OUI</button>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="ver">v0.1.0</div>
+    </section>
+
+    <!-- Fin de partie -->
+    <section id="end" class="screen" hidden>
+      <h1 id="endTitle">VICTOIRE</h1>
+      <p id="endScore" class="endscore"></p>
+      <div class="stats" id="endStats"></div>
+      <div class="menu-btns">
+        <button class="btn big" id="btnAgain">REJOUER</button>
+        <button class="btn ghost" id="btnMenu">MENU</button>
+      </div>
+    </section>
+
+    <!-- Pause -->
+    <section id="pause" class="screen dim" hidden>
+      <h2>PAUSE</h2>
+      <div class="menu-btns">
+        <button class="btn big" id="btnResume">REPRENDRE</button>
+        <button class="btn ghost" id="btnPauseRules">RÈGLES</button>
+        <button class="btn ghost" id="btnPauseCodex">CARTES</button>
+        <button class="btn ghost" id="btnLog">JOURNAL</button>
+        <button class="btn danger" id="btnQuit">ABANDONNER</button>
+      </div>
+    </section>
+
+    <!-- Feuille d'info / codex / règles -->
+    <section id="sheet" class="sheet" hidden>
+      <div class="sheet-inner">
+        <button class="icon-btn close" id="btnSheetClose" aria-label="Fermer"><i class="ico-x"></i></button>
+        <div id="sheetBody"></div>
+      </div>
+    </section>
+
+    <div id="loading"><div class="spin"></div><p>Mélange des cartes…</p></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

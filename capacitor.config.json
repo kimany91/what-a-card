@@ -1,0 +1,6 @@
+{
+  "appId": "com.whatacard.game",
+  "appName": "What a Card",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#0b0a14" }
+}
