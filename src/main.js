@@ -42,6 +42,14 @@ class UI {
   setPts(p, v) { this.el(p, 'Pts').textContent = String(v); }
   bumpPts(p, d) {
     const e = this.el(p, 'Pts');
+    // « +1 » qui vole du centre vers le jeton du joueur concerné
+    const f = document.createElement('div');
+    f.className = 'flypts ' + (p === this.me ? 'me' : 'opp') + (d < 0 ? ' neg' : '');
+    f.textContent = (d > 0 ? '+' : '−') + Math.abs(d);
+    document.getElementById('overlay').appendChild(f);
+    const r = e.parentElement.getBoundingClientRect();
+    const x1 = r.left + r.width / 2, y1 = r.top + r.height / 2, x0 = innerWidth / 2, y0 = innerHeight * 0.45;
+    animate(0.6, (k) => { f.style.transform = `translate(${x0 + (x1 - x0) * k}px, ${y0 + (y1 - y0) * k}px) translate(-50%, -50%) scale(${1.6 - k * 0.8})`; f.style.opacity = String(k > 0.85 ? (1 - k) / 0.15 : 1); }, ease.inQuad).then(() => f.remove());
     e.textContent = String(Math.max(0, (+e.textContent || 0) + d));
     const chip = e.parentElement;
     chip.classList.remove('bump', 'hurt'); void chip.offsetWidth;
@@ -194,6 +202,7 @@ const game = {
     Object.assign(ui, { me: 0, S: this.S, hand: [], oppCount: 0, winStreak: 0 });
     $('hand').innerHTML = ''; $('oppHand').innerHTML = ''; $('streak').hidden = true;
     world.setPerspective(0);
+    world.showBoard(true);
     ui.update(this.S);
     ui.prompt('');
     show('hud');
@@ -275,6 +284,7 @@ const game = {
   },
 
   myTurn() {
+    if (mg.active) return;
     this.reset();
     const acts = listActions(this.S, this.me);
     this.acts = acts;
@@ -454,20 +464,17 @@ function swipeReveal(card, setFlip) {
   });
 }
 
-// Cartes de la main : toucher = fiche ; glisser vers le haut = jouer.
+// Cartes de la main : toucher = fiche (avec JOUER) ; glisser vers le haut = jouer directement.
 function bindHandCard(el) {
   let start = null, drag = false;
-  el.addEventListener('pointerdown', (e) => {
-    start = { x: e.clientX, y: e.clientY };
-    drag = false;
-    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-  });
+  el.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY, id: e.pointerId }; drag = false; });
   el.addEventListener('pointermove', (e) => {
     if (!start) return;
     const dx = e.clientX - start.x, dy = e.clientY - start.y;
     const hid = +el.dataset.id;
-    if (!drag && dy < -25 && game.mode === 'act' && ui.playable.has(hid)) {
+    if (!drag && dy < -40 && Math.abs(dy) > Math.abs(dx) && game.mode === 'act' && ui.playable.has(hid)) {
       drag = true;
+      try { el.setPointerCapture(start.id); } catch { /* ignore */ }
       el.classList.add('drag');
       const acts = game.cardActs(hid);
       world.highlight(acts.filter((a) => !['miss', 'self', 'hand', 'cell'].includes(a.tgt.t)).map((a) => a.tgt));
@@ -485,6 +492,7 @@ function bindHandCard(el) {
       openNote({ kind, canPlay: can, onPlay: () => game.begin(hid) });
       return;
     }
+    drag = false;
     el.classList.remove('drag');
     el.style.removeProperty('--dx'); el.style.removeProperty('--dy');
     world.clearHighlight(); world.clearCells();
@@ -498,7 +506,7 @@ function bindHandCard(el) {
     if (a && a.kind !== 'flingue' && a.kind !== 'billard') game.commit(a, acts);
     else game.begin(hid);
   });
-  el.addEventListener('pointercancel', () => { start = null; el.classList.remove('drag'); });
+  el.addEventListener('pointercancel', () => { start = null; drag = false; el.classList.remove('drag'); });
 }
 
 function statHTML() {

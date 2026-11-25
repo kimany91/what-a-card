@@ -1,10 +1,10 @@
-# What a Card — v0.2.0
+# What a Card — v0.3.0
 
 Une bataille de cartes en 3D qui part en vrille. Jeu mobile Android, en portrait.
 
 ## Installer l'APK
 
-1. Ouvre la page **Releases** du dépôt depuis ton téléphone et prends la dernière version `what-a-card-v0.2.0.apk`.
+1. Ouvre la page **Releases** du dépôt depuis ton téléphone et prends la dernière version `what-a-card-v0.3.0.apk`.
    (L'APK est aussi disponible dans l'onglet **Actions**, dans les « artifacts » de chaque construction.)
 2. Ouvre le fichier. Android demande d'autoriser l'installation d'applications inconnues : accepte pour ton navigateur ou ton gestionnaire de fichiers.
 3. Lance **What a Card**.
@@ -15,7 +15,7 @@ L'APK est une version de test (signée avec une clé de debug). Pour passer d'un
 
 - **Piocher** : à ton tour, ta pioche brille. Touche-la, puis glisse la carte à gauche ou à droite pour la retourner.
 - **Carte normale** : c’est ta carte du pli (2 à As). La plus forte gagne : +1 point.
-- **Objet** : il part dans ta main et tu repioches. Le premier tour, que des cartes normales.
+- **Objet** : il part dans ta main et tu repioches. Le premier tour, que des cartes normales. Si ta main est vide, tu piocheras toujours au moins un objet avant ta carte normale.
 - **Ton tour d’action** : joue des objets de ta main (chacun ne sert qu’une fois), déplace une de tes pièces d’échecs (un coup par tour), ou passe. On joue chacun son tour jusqu’à ce que les deux passent.
 - **Égalité** : BATAILLE, le pli suivant rapporte plus.
 - **Mort** (Flingue, foudre…) : tu perds le pli et 2 points à ta réincarnation.
@@ -25,8 +25,8 @@ L'APK est une version de test (signée avec une clé de debug). Pour passer d'un
 - **Flingue** : vue subjective, tu vises en glissant, tu tires avec le bouton TIRER. On peut rater.
 - **Boule de billard** : pose ta boule sur l’échiquier, vise sur le côté, tire la queue vers le bas et lâche. Une vraie physique décide de ce qui tombe.
 - **Canne à pêche** : touche ta cible, puis mouline en cercle. Trop vite, la ligne casse.
-- **Briquet** : frotte la molette, puis maintiens pour brûler. **Tronçonneuse** : tire la corde, puis maintiens.
-- **Ventilateur** : fais-le tourner au doigt. **Pelle**, **Engrais** : tape vite. **Dé** : lance-le d’un geste. **Seau**, **Aimant** : maintiens.
+- **Briquet** : frotte la molette, puis maintiens pour brûler (un As ne brûle pas). **Tronçonneuse** : tire la corde, puis maintiens.
+- **Pelle**, **Engrais** : tape vite. **Dé** : lance-le d’un geste. **Seau**, **Aimant** : maintiens.
 
 ### Les échecs
 Reine (lignes et diagonales), Tour (lignes), Roi (une case, +1 à tes cartes), Pion (avance d’une case, prend en diagonale, devient Reine au bout). Prendre le Roi adverse : échec et mat, il perd 2 points.

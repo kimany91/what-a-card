@@ -9,7 +9,7 @@ const MIN = -0.5, MAX = 4.5;
 export function simulateShot(bodies, start, angle, power) {
   const B = bodies.map((b) => ({ ...b, vx: 0, vy: 0, alive: true }));
   const ball = { id: 'ball', x: start.x, y: start.y, r: BALL_R, m: 1, vx: 0, vy: 0, alive: true };
-  const v0 = 2.5 + Math.max(0, Math.min(1, power)) * 9.5;
+  const v0 = 1.5 + Math.max(0, Math.min(1, power)) * 5.9;
   ball.vx = Math.cos(angle) * v0;
   ball.vy = Math.sin(angle) * v0;
   const all = [ball, ...B];
@@ -22,7 +22,7 @@ export function simulateShot(bodies, start, angle, power) {
       if (!b.alive) continue;
       const sp = Math.hypot(b.vx, b.vy);
       if (sp > 0) {
-        const dec = Math.min(sp, (1.6 + sp * 0.9) * STEP);
+        const dec = Math.min(sp, (2.4 + sp * 1.3) * STEP);
         b.vx -= (b.vx / sp) * dec; b.vy -= (b.vy / sp) * dec;
       }
       b.x += b.vx * STEP; b.y += b.vy * STEP;
@@ -46,7 +46,7 @@ export function simulateShot(bodies, start, angle, power) {
         p.x -= nx * over * (q.m / tm); p.y -= ny * over * (q.m / tm);
         q.x += nx * over * (p.m / tm); q.y += ny * over * (p.m / tm);
         if (rel <= 0) continue;
-        const j = (1.9 * rel) / (1 / p.m + 1 / q.m);
+        const j = (1.55 * rel) / (1 / p.m + 1 / q.m);
         p.vx -= (j / p.m) * nx; p.vy -= (j / p.m) * ny;
         q.vx += (j / q.m) * nx; q.vy += (j / q.m) * ny;
         hits[p.id] = Math.max(hits[p.id] || 0, rel);

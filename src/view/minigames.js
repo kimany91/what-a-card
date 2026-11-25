@@ -99,7 +99,7 @@ export class Minigames {
           this.reelEl.style.setProperty('--rot', (parseFloat(this.reelEl.style.getPropertyValue('--rot') || '0') + (d * 180) / Math.PI) + 'deg');
           if (onDelta(Math.abs(d)) === true) { this.handlers = null; this.reelEl.hidden = true; res(); }
         },
-        up: () => { lastA = null; onDelta(0); },
+        up: () => { lastA = null; },
       };
       this._crankDone = () => { this.handlers = null; this.reelEl.hidden = true; res(); };
     });
@@ -137,8 +137,9 @@ export class Minigames {
     const fn = this['mg_' + kind];
     if (!fn) return { a, aim: null };
     this.A.skipUse = true;
+    this.active = true;
     try { return await fn.call(this, a, acts); }
-    finally { this.close(); }
+    finally { this.close(); this.active = false; }
   }
 
   // ------------------------------------------------------------ Flingue : vue subjective
@@ -324,36 +325,49 @@ export class Minigames {
     const s0 = tip();
     await animate(0.5, (k) => { const e = s0.clone().lerp(target, k); e.y += Math.sin(Math.PI * k) * 2.2; setLine(e, 0.3 * k); }, ease.outQuad);
     sfx('plop'); this.fx.water(target, 20);
-    // combat
-    this.hint('MOULINE EN CERCLE · PAS TROP VITE OU LA LIGNE CASSE');
-    let progress = 0, tension = 0, over = 0, tug = 0, done = null, time = 0;
+    // combat : la tension suit la vitesse réelle du moulinet (tours par seconde), pas le nombre de mouvements
+    this.hint('MOULINE EN CERCLE · RESTE HORS DU ROUGE');
+    let progress = 0, tension = 0, over = 0, tug = 0, tugT = 0, done = null, time = 0;
+    let spun = 0, omega = 0, last = performance.now(), nextTug = 1.5 + Math.random() * 1.5, idle = 0;
+    const hist = [];
     const targetObj = W.objectForTarget(a.tgt);
     const home = targetObj ? targetObj.position.clone() : null;
     const ticker = () => {
       if (done) return;
-      time += 0.016;
-      tug = Math.max(0, tug - 0.016 * 2);
-      if (Math.random() < 0.012) { tug = 0.5 + Math.random() * 0.4; buzz(30); sfx('plop'); }
-      tension = Math.max(0, tension - 0.016 * 0.9) ;
-      const shown = Math.min(1.2, tension + tug * 0.6);
-      over = shown > 1 ? over + 0.016 : Math.max(0, over - 0.016);
-      this.gauge(shown, shown > 0.8);
-      lineMat.color.set(shown > 0.8 ? '#ff3d71' : '#ffffff');
-      const end = target.clone().lerp(tip(), progress * 0.85);
-      end.y += Math.sin(time * 18) * 0.05 * (1 + tug * 3);
-      setLine(end, 0.25 * (1 - shown));
-      if (targetObj && a.tgt.t !== 'card') { targetObj.position.copy(home.clone().lerp(tip(), progress * 0.3)); targetObj.rotation.z = Math.sin(time * 20) * 0.1 * (1 + tug); }
-      if (over > 0.45) done = 'break';
-      else if (time > 10) done = 'lost';
+      const now = performance.now(), dt = Math.min(0.25, (now - last) / 1000); last = now;
+      time += dt;
+      // vitesse angulaire mesurée sur les 0,3 dernières secondes (rad/s)
+      hist.push([now, spun]);
+      while (hist.length > 2 && now - hist[0][0] > 300) hist.shift();
+      omega = hist.length > 1 ? (spun - hist[0][1]) / Math.max(0.05, (now - hist[0][0]) / 1000) : 0;
+      idle = omega < 1 ? idle + dt : 0;
+      // le poisson tire de temps en temps : une vague douce d'environ 1 s
+      nextTug -= dt;
+      if (nextTug <= 0) { tugT = 1; nextTug = 2 + Math.random() * 2; buzz(40); sfx('plop'); this.fx.pop(hook.position.clone().add(V(0, 0.7, 0)), 'IL TIRE !', 'bad', 0.8); }
+      tugT = Math.max(0, tugT - dt);
+      tug = Math.sin(tugT * Math.PI) * 0.45;
+      const want = Math.min(1.4, omega / 15 + tug);
+      tension += (want - tension) * Math.min(1, dt * 4);
+      if (tension > 1) over += dt; else over = Math.max(0, over - dt * 1.5);
+      progress += Math.max(0, omega) * dt / 42 * (tension > 1 ? 0.25 : 1);
+      this.gauge(Math.min(1, tension), tension > 0.8);
+      this.hint(tension > 1 ? 'TROP FORT ! RALENTIS' : tension > 0.8 ? 'ATTENTION…' : 'MOULINE EN CERCLE · RESTE HORS DU ROUGE');
+      lineMat.color.set(tension > 1 && Math.floor(time * 10) % 2 ? '#ff3d71' : tension > 0.8 ? '#ff8fa3' : '#ffffff');
+      const end = target.clone().lerp(tip(), Math.min(1, progress) * 0.85);
+      end.y += Math.sin(time * 18) * 0.04 * (1 + tug * 4);
+      setLine(end, 0.3 * (1 - Math.min(1, tension)));
+      if (targetObj && a.tgt.t !== 'card') { targetObj.position.copy(home.clone().lerp(tip(), Math.min(1, progress) * 0.3)); targetObj.rotation.z = Math.sin(time * 20) * 0.08 * (1 + tug * 3); }
+      if (progress >= 1) done = 'ok';
+      else if (over > 0.9) done = 'break';
+      else if (idle > 4) done = 'lost';
       if (done) this._crankDone?.();
       else requestAnimationFrame(ticker);
     };
     requestAnimationFrame(ticker);
     await this.crank((d) => {
-      if (done) return true;
-      if (d > 0) { tension += d * 0.42; progress += d * 0.045 * (1 - tug * 0.7); if (Math.random() < 0.3) sfx('tick'); }
-      if (progress >= 1) { done = 'ok'; return true; }
-      return false;
+      spun += d;
+      if (d > 0.05 && Math.random() < 0.25) sfx('tick');
+      return !!done;
     });
     this.gauge(null);
     if (targetObj && home) { targetObj.position.copy(home); targetObj.rotation.z = 0; }

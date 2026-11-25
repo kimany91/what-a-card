@@ -369,7 +369,7 @@ const CARDS = {
   briquet: {
     hostile: true,
     available: (S) => !globalOn(S, 'orage'),
-    targets: (S, p) => [...oppCard(S, p), ...not(S, (x) => (x.owner !== p && hasTag(x.kind, 'feu')) || x.kind === 'bombe').map(T.ent)],
+    targets: (S, p) => [...oppCard(S, p).filter((t) => P(S, t.p).card.r !== 14), ...not(S, (x) => (x.owner !== p && hasTag(x.kind, 'feu')) || x.kind === 'bombe').map(T.ent)],
     apply(S, p, t) {
       emit(S, 'use', { p, kind: 'briquet', tgt: t }, `${nm(S, p)} met le feu à ${describeTarget(S, t)}.`);
       if (t.t === 'card') {
@@ -435,7 +435,7 @@ const CARDS = {
     },
   },
   photocop: {
-    targets: (S, p) => [...(hasCard(S, p) && hasCard(S, other(p)) ? [T.card(other(p))] : []), ...not(S, (x) => x.kind !== 'banane').map(T.ent)],
+    targets: (S, p) => [...(hasCard(S, p) && hasCard(S, other(p)) ? [T.card(other(p))] : []), ...not(S, (x) => x.owner !== p && x.kind !== 'banane').map(T.ent)],
     apply(S, p, t) {
       emit(S, 'use', { p, kind: 'photocop', tgt: t }, `${nm(S, p)} photocopie ${describeTarget(S, t)}.`);
       if (t.t === 'card') {
@@ -625,7 +625,9 @@ export const canDraw = (S, p) => S.phase === 'draw' && S.turn === p && !S.drawn[
 export function draw(S, p) {
   if (!canDraw(S, p)) return false;
   const pl = P(S, p);
-  if (S.round >= 2 && pl.objRun < 3 && R() < OBJ_CHANCE) {
+  // main vide : on pioche toujours au moins un objet avant la carte normale
+  const forceObj = S.round >= 2 && pl.objRun === 0 && pl.hand.length === 0;
+  if (S.round >= 2 && (forceObj || (pl.objRun < 3 && R() < OBJ_CHANCE))) {
     if (!S.pool.length) {
       const all = [];
       for (const k of KIND_IDS) for (let i = 0; i < KINDS[k].weight; i++) all.push(k);

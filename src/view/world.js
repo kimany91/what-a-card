@@ -146,13 +146,13 @@ export class World {
   potPos() { return new THREE.Vector3(2.85, 0, 0); }
   cardRot(p) { return new THREE.Euler(CARD_TILT, 0, 0); }
 
-  slotPos(p, i, n) {
-    const cols = Math.max(5, n);
-    const span = 5.6;
-    const x = -span / 2 + (span / cols) * (i + 0.5);
-    return new THREE.Vector3(x, 0, this.zs(p) * 4.65);
+  // Objets posés devant un joueur : sur les côtés de l'échiquier, dans sa moitié de table.
+  slotPos(p, i) {
+    const zs = this.zs(p);
+    if (i < 3) return new THREE.Vector3(2.88, 0, zs * (0.7 + i * 0.78));
+    return new THREE.Vector3(-2.88, 0, zs * (1.05 + (i - 3) * 0.8));
   }
-  sideScale(n) { return n > 5 ? 0.85 : 1.0; }
+  sideScale() { return 0.82; }
 
   entTarget(m) {
     if (m.zone === 'board') return { pos: this.cellPos(m.x, m.y), scale: 1.05 };
@@ -310,7 +310,7 @@ export class World {
       this.decks[p].userData.set(S.players[p].deck.length);
       this.mal[p] = S.players[p].malheur;
     }
-    this.showBoard(S.ents.some((e) => e.zone === 'board'));
+    this.showBoard(true);
     return this.relayout(0.3);
   }
 
@@ -406,10 +406,6 @@ export class World {
   dropBadges(prefix) { for (const [k, b] of this.badges) if (k.startsWith(prefix)) { b.el.remove(); this.badges.delete(k); } }
   updateBadges() {
     for (const b of this.badges.values()) b.seen = false;
-    for (const m of this.models.values()) {
-      if (m.kind !== 'bombe' || m.obj.scale.x < 0.3) continue;
-      this.badge('e' + m.id + 't', m.obj.position.clone().add(new THREE.Vector3(0, 1.05 * m.obj.scale.x, 0)), String(m.timer), 'timer bomb');
-    }
     const W = this.overlay.clientWidth, H = this.overlay.clientHeight;
     for (const [k, b] of this.badges) {
       if (!b.seen) { b.el.remove(); this.badges.delete(k); continue; }
@@ -483,6 +479,7 @@ export class World {
       if (u.disk) { u.disk.rotation.z += dt * 1.6; u.halo.scale.setScalar(1 + Math.sin(this.time * 4) * 0.06); }
       if (u.spark) { const s = 0.7 + Math.random() * 0.6; u.spark.scale.setScalar(s); if (Math.random() < 0.3) this.fx.add.emit(u.spark.getWorldPosition(new THREE.Vector3()), new THREE.Vector3((Math.random() - 0.5), 1.5, (Math.random() - 0.5)), { color: '#ffba08', size: 0.08, life: 0.35, gravity: -2 }); }
       if (m.kind === 'chat' && !m.busy) m.obj.userData.model.rotation.y = Math.sin(this.time * 0.7 + m.id) * 0.6;
+      if (m.kind === 'bombe') this.bombLed(m);
     }
     for (const p of [0, 1]) {
       const a = this.avatars[p].userData.inner;
@@ -495,9 +492,8 @@ export class World {
       const target = this.deckGlow === p ? 0.55 + Math.sin(this.time * 5) * 0.3 : 0;
       gl.material.opacity += (target - gl.material.opacity) * Math.min(1, dt * 10);
     }
-    if (this.globalObjs.orage) {
-      this.globalObjs.orage.rotation.y += dt * 0.1;
-      for (let i = 0; i < 6; i++) this.fx.norm.emit(new THREE.Vector3((Math.random() - 0.5) * 7, 6, (Math.random() - 0.5) * 12), new THREE.Vector3(0, -14, 0), { color: '#90e0ef', size: 0.07, life: 0.45, gravity: -10, drag: 0 });
+    if (this.storm) {
+      for (let i = 0; i < 2; i++) this.fx.norm.emit(new THREE.Vector3((Math.random() - 0.5) * 7, 6, (Math.random() - 0.5) * 12), new THREE.Vector3(0, -14, 0), { color: '#90e0ef', size: 0.045, life: 0.45, gravity: -10, drag: 0 });
     }
     // caméra
     this.camPunch *= Math.pow(0.02, dtReal);
@@ -520,6 +516,32 @@ export class World {
   }
   punch(a = 1) { this.camPunch = Math.max(this.camPunch, a); }
 
+  // Petit écran LED fixé sur la bombe : le compte à rebours fait partie de la scène 3D.
+  bombLed(m) {
+    let led = m.obj.userData.led;
+    if (!led) {
+      const cv = document.createElement('canvas'); cv.width = 96; cv.height = 64;
+      const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+      led = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.28), new THREE.MeshBasicMaterial({ map: tex }));
+      led.position.set(0, 1.0, 0);
+      led.userData = { cv, tex, shown: null };
+      m.obj.add(led);
+      m.obj.userData.led = led;
+    }
+    led.quaternion.copy(this.camera.quaternion);
+    if (m.obj.parent) led.quaternion.premultiply(m.obj.quaternion.clone().invert());
+    if (led.userData.shown !== m.timer) {
+      led.userData.shown = m.timer;
+      const g = led.userData.cv.getContext('2d');
+      g.fillStyle = '#111'; g.fillRect(0, 0, 96, 64);
+      g.strokeStyle = '#444'; g.lineWidth = 6; g.strokeRect(3, 3, 90, 58);
+      g.fillStyle = '#ff3030'; g.shadowColor = '#ff0000'; g.shadowBlur = 12;
+      g.font = 'bold 46px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(String(m.timer ?? ''), 48, 35);
+      led.userData.tex.needsUpdate = true;
+    }
+  }
+
   // Vue subjective : la caméra glisse vers pos et regarde target.
   setPov(pos, target, fov = 55, dur = 0.6) {
     if (!this.pov) this.pov = { pos: pos.clone(), target: target.clone(), fov };
@@ -536,7 +558,7 @@ export class World {
     this.deckGlow = null;
     this.pov = null; this.povK = 0;
     for (const c of [...this.potGroup.children]) this.potGroup.remove(c);
-    if (this.globalObjs.orage) { this.scene.remove(this.globalObjs.orage); this.globalObjs.orage = null; }
+    this.storm = false;
     this.hemi.intensity = 0.9; this.sun.intensity = 2.4;
     this.rim.color.set('#ff3d71'); this.rim2.color.set('#ffc93c');
     this.camRoll = 0;

@@ -211,7 +211,6 @@ export class Animator {
     }
     W.removeEnt(ev.id);
     W.relayout(0.3);
-    if (![...W.models.values()].some((x) => x.zone === 'board')) W.showBoard(false);
   }
 
   async on_explode(ev) {
@@ -518,6 +517,7 @@ export class Animator {
         }
       }
     }
+    this.goHome(m);
   }
 
   async use_ventilo(ev, m) {
@@ -675,24 +675,15 @@ export class Animator {
   async on_global(ev) {
     const W = this.W;
     if (ev.kind === 'orage') {
-      if (ev.on && !W.globalObjs.orage) {
-        const cl = new THREE.Group();
-        const m = mat('#495057', { rough: 1, flat: true });
-        for (let i = 0; i < 14; i++) {
-          const s = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6 + Math.random() * 0.7, 1), m);
-          s.position.set((Math.random() - 0.5) * 6, 5 + Math.random() * 0.8, (Math.random() - 0.5) * 9);
-          cl.add(s);
-        }
-        cl.scale.setScalar(0.01);
-        W.scene.add(cl); W.globalObjs.orage = cl;
+      if (ev.on && !W.storm) {
+        W.storm = true;
         sfx('thunder');
         this.fx.flash('#ffffff', 0.6, 0.3);
-        this.fx.banner('ORAGE !', 'storm', 1.2);
-        await all(this.scaleTo(cl, 1, 0.8, ease.outCubic), tween(W.hemi, { intensity: 0.45 }, 0.8), tween(W.sun, { intensity: 1.0 }, 0.8));
-      } else if (!ev.on && W.globalObjs.orage) {
-        const cl = W.globalObjs.orage; W.globalObjs.orage = null;
-        await all(tween(cl.position, { x: 12 }, 0.8, ease.inQuad), tween(W.hemi, { intensity: 0.9 }, 0.8), tween(W.sun, { intensity: 2.4 }, 0.8));
-        W.scene.remove(cl);
+        this.fx.banner('ORAGE', 'storm', 1.1);
+        await all(tween(W.hemi, { intensity: 0.55 }, 0.8), tween(W.sun, { intensity: 1.4 }, 0.8));
+      } else if (!ev.on && W.storm) {
+        W.storm = false;
+        await all(tween(W.hemi, { intensity: 0.9 }, 0.8), tween(W.sun, { intensity: 2.4 }, 0.8));
       }
     } else if (ev.kind === 'envers') {
       if (ev.on) {
@@ -857,42 +848,61 @@ export class Animator {
   async on_popup(ev) { await this.fx.pop(V(0, 1.2, 0), ev.word, 'muted', 0.9); }
 
   // ------------------------------------------------------------ résultat du pli
+  // Résultat du pli : les deux cartes viennent au centre (la tienne en bas), la gagnante brille.
   async on_result(ev) {
-    const W = this.W, r = ev.res;
+    const W = this.W, r = ev.res, me = W.me, opp = 1 - me;
     const cs = W.cards;
-    for (const p of [0, 1]) if (cs[p] && r.v[p] != null) this.fx.pop(cs[p].position.clone().add(V(0, 1.2, 0)), String(r.v[p]), 'huge ' + (p === W.me ? 'me' : 'opp'), 1.1);
+    const spot = { [opp]: W.revealPoint(9.6, 1.35), [me]: W.revealPoint(9.6, -1.3) };
+    sfx('whoosh');
+    await all([0, 1].map((p) => {
+      const c = cs[p];
+      if (!c) return null;
+      const q0 = c.quaternion.clone(), q1 = W.cameraQuat(0), p0 = c.position.clone(), s0 = c.scale.x;
+      return animate(0.4, (k) => { c.position.lerpVectors(p0, spot[p], k); c.quaternion.slerpQuaternions(q0, q1, k); c.scale.setScalar(s0 + (1.05 - s0) * k); }, ease.outCubic);
+    }));
+    for (const p of [0, 1]) {
+      const label = p === me ? 'TOI' : this.ui.name(p).toUpperCase();
+      const at = spot[p].clone().add(V(-1.15, 0, 0));
+      const val = r.v[p] == null ? '—' : String(r.v[p]);
+      this.fx.pop(at, `${val}`, 'huge ' + (p === me ? 'me' : 'opp'), 1.6);
+      this.fx.pop(spot[p].clone().add(V(1.15, 0, 0)), label, p === me ? 'me' : 'opp', 1.6);
+    }
     await wait(0.45);
     if (r.kind === 'void') {
       sfx('suck');
-      await all(cs.filter(Boolean).map((c) => all(tween(c.position, { x: 0, y: 0.6, z: 0 }, 0.6, ease.inCubic), this.scaleTo(c, 0.01, 0.6, ease.inCubic), this.spin(c, 'y', 3, 0.6))));
-      this.fx.banner('AVALÉES', 'envers', 1);
+      await all(cs.filter(Boolean).map((c) => all(this.scaleTo(c, 0.01, 0.6, ease.inCubic), this.spin(c, 'z', 3, 0.6))));
+      this.fx.banner('PERSONNE NE GAGNE', 'envers', 1.2);
     } else if (r.winner == null) {
       sfx('bataille'); buzz(80);
       this.fx.shake(0.7); W.punch(0.8);
-      this.fx.banner('BATAILLE !', 'bataille', 1.3);
+      this.fx.banner('ÉGALITÉ : BATAILLE !', 'bataille', 1.4);
+      await wait(0.9);
       const pot = W.potPos();
       await all(cs.filter(Boolean).map((c, i) => all(this.arc(c, pot.clone().add(V(0, 0.05 + i * 0.03 + W.potGroup.children.length * 0.03, 0)), 1, 0.5), tween(c.rotation, { x: 0, z: Math.PI, y: (Math.random() - 0.5) * 0.6 }, 0.5))));
       for (const c of cs) if (c) { W.scene.remove(c); c.scale.setScalar(0.8); c.position.copy(pot).setY(0.03 + W.potGroup.children.length * 0.03); W.potGroup.add(c); }
     } else {
-      const w = r.winner, l = 1 - w;
+      const w = r.winner, l = 1 - w, iWin = w === me;
       const wc = cs[w], lc = cs[l];
-      if (wc && lc) {
-        const above = lc.position.clone().add(V(0, 1.2, 0));
-        await all(this.arc(wc, above, 0.8, 0.28, ease.outCubic), this.spin(wc, 'z', 1, 0.28));
-        await tween(wc.position, { x: lc.position.x, y: lc.position.y + 0.1, z: lc.position.z }, 0.1, ease.inQuad);
-        sfx('slam'); buzz(70); freezeFrame(0.07);
-        this.fx.shake(0.7); W.punch(0.7);
-        this.fx.burst(lc.position, { n: 40, colors: w === W.me ? ['#ffc93c', '#ffffff'] : ['#ff3d71', '#ffffff'], speed: 5, up: 3, size: 0.25, life: 0.6 });
-        this.fx.ring(lc.position.clone().setY(0.05), { color: w === W.me ? '#ffc93c' : '#ff3d71', radius: 3, dur: 0.4 });
-      } else if (wc) {
-        await this.squash(wc, 1, 0.4, 0.35);
+      if (wc) {
+        const rays = this.rays({ obj: null, card: { r: 14 } });
+        if (rays) { rays.material.color.set(iWin ? '#ffc93c' : '#ff3d71'); rays.position.copy(spot[w]).addScaledVector(W.camera.getWorldDirection(V()), 0.3); rays.quaternion.copy(W.camera.quaternion); animate(0.3, (k) => { rays.material.opacity = 0.8 * k; }); setTimeout(() => W.scene.remove(rays), 1400); }
+        this.scaleTo(wc, 1.25, 0.3);
+        this.fx.burst(spot[w], { n: 50, colors: iWin ? ['#ffc93c', '#ffffff'] : ['#ff3d71', '#ffffff'], speed: 4, up: 2, size: 0.22, life: 0.7, gravity: -2 });
       }
-      this.fx.banner(w === W.me ? 'PLI GAGNÉ' : 'PLI PERDU', w === W.me ? 'win' : 'lose', 1.05);
-      sfx(w === W.me ? 'win' : 'lose');
+      if (lc) {
+        const m = lc.userData.front.material = lc.userData.front.material.clone();
+        animate(0.3, (k) => { m.color.setScalar(1 - k * 0.6); m.emissiveIntensity = 0.55 * (1 - k * 0.8); });
+        this.jitter(lc, 0.12, 0.3);
+      }
+      sfx(iWin ? 'win' : 'lose'); buzz(iWin ? 60 : 120);
+      this.fx.shake(iWin ? 0.4 : 0.6);
+      this.fx.banner(iWin ? 'TU GAGNES LE PLI' : `${this.ui.name(w).toUpperCase()} GAGNE LE PLI`, iWin ? 'win' : 'lose', 1.5);
+      await wait(1.1);
       const deck = W.deckPos(w).add(V(0, 0.4, 0));
       const pot = [...W.potGroup.children];
       for (const c of pot) { W.potGroup.remove(c); W.scene.add(c); }
-      await all([...cs.filter(Boolean), ...pot].map((c, i) => wait(i * 0.05).then(() => all(this.arc(c, deck, 1.4, 0.45), tween(c.rotation, { x: 0, z: Math.PI, y: 0 }, 0.45), this.scaleTo(c, 0.95, 0.45)))));
+      sfx('whoosh');
+      await all([...cs.filter(Boolean), ...pot].map((c, i) => wait(i * 0.05).then(() => all(this.arc(c, deck, 1.2, 0.45), tween(c.rotation, { x: 0, z: Math.PI, y: 0 }, 0.45), this.scaleTo(c, 0.95, 0.45)))));
       for (const c of [...cs, ...pot]) if (c) W.scene.remove(c);
       this.squash(W.decks[w], 1, 0.3, 0.3);
     }
